@@ -27,38 +27,17 @@ AppState :: struct {
   mu_context : mu.Context
 }
 
-init :: proc(appstate : ^AppState) -> (ok : bool) {
+init :: proc(appstate : ^AppState) -> (mu_context : ^mu.Context, ok : bool) {
 
   mu.init(&appstate.mu_context)
 
-  mu_context := &appstate.mu_context;
+  mu_context = &appstate.mu_context;
   mu_context.text_width  = mu.default_atlas_text_width
   mu_context.text_height = mu.default_atlas_text_height
 
-  return true
+  return mu_context, true
 }
 
-render :: proc(appstate : ^AppState) -> (ret: ^mu.Context) {
-  rect : mu.Rect = {
-    x = 0, y = 0,
-    w = window_specs.width, h = window_specs.height
-  }
-  ctx := &appstate.mu_context
-
-  mu.begin(ctx)
-  {
-    mu.begin_window(ctx, window_specs.title, rect, )
-    {
-      if (mu.button(ctx, "test") == { mu.Result.ACTIVE }) {
-        fmt.println("Button Press")
-      }
-    }
-    mu.end_window(ctx)
-  }
-  mu.end(ctx)
-
-  return ctx
-}
 
 
 
