@@ -21,6 +21,8 @@ Nbt_Values :: union {
 */
 
 Nbt_Tag :: struct {
+  // NOTE(dendo): nameless Nbt_Tag have name == 0
+  // TODO(dendo): Should we strees about storing nameless tags differently to save space?
   name : string,
   type : Nbt_TagType,
   value : Nbt_TagValue,
@@ -115,9 +117,9 @@ Nbt_FileHeaderData :: struct {
   longs : []i64,
   doubles : []f64,
 
-  byte_arrays : []BytesView,
-  int_arrays : []IntsView,
-  long_arrays : []LongsView,
+  bytes_views : []BytesView,
+  ints_views : []IntsView,
+  longs_views : []LongsView,
 
   // NOTE: points to tags
   childrens : []TagsView,
