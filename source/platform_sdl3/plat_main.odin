@@ -41,6 +41,8 @@ main :: proc () {
 AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.AppResult {
   context = runtime.default_context()
 
+  fmt.print(size_of(nbtfinder.Nbt_TagValue))
+
   // DESC: plataform init
   {
     width := i32(nbtfinder.window_specs.width)
@@ -80,7 +82,7 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
   }
 
 
-  //nbtfinder.Mca_read("r.0.0.mca")
+  nbtfinder.Mca_read("r.0.0.mca")
 
   app_result := sdl3.AppResult.CONTINUE
   return app_result
