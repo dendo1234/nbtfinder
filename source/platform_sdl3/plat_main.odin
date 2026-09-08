@@ -41,7 +41,7 @@ main :: proc () {
 AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.AppResult {
   context = runtime.default_context()
 
-  fmt.print(size_of(nbtfinder.Nbt_TagValue))
+  fmt.print(size_of(nbtfinder.NBT_Value))
 
   // DESC: plataform init
   {

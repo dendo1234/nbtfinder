@@ -5,7 +5,7 @@ import "core:fmt"
 import mu "vendor:microui"
 
 
-draw_tag :: proc(appstate : ^AppState, tag : Nbt_Tag) {
+draw_tag :: proc(appstate : ^AppState, tag : NBT_Tag) {
   ctx := &appstate.mu_context
 
   switch tag.type {
@@ -89,10 +89,15 @@ draw_tag :: proc(appstate : ^AppState, tag : Nbt_Tag) {
   }
 }
 
+draw_nbt_header :: proc(appstate : ^AppState, header : ^NBT_Decoded_Header) {
+  root_tag := header.tags[header.root_tag_index]
+
+  draw_tag(appstate, root_tag)
+}
+
 microui_draw_commands :: proc(appstate : ^AppState, rect : mu.Rect) {
   ctx := &appstate.mu_context
 
-  root_tag := appstate.header.tags[appstate.header.root_tag_index]
   mu.begin(ctx)
   {
     if mu.begin_window(ctx, window_specs.title, rect, { .NO_CLOSE, .NO_RESIZE }) {
@@ -100,12 +105,13 @@ microui_draw_commands :: proc(appstate : ^AppState, rect : mu.Rect) {
       win.rect.w = rect.w;
       win.rect.h = rect.h;
 
+      /*
       if .SUBMIT in mu.button(ctx, "test") {
         fmt.println("Button Press")
       }
+      */
 
-      draw_tag(appstate, root_tag)
-
+      draw_nbt_header(appstate, appstate.header)
 
       mu.end_window(ctx)
     }
