@@ -381,7 +381,7 @@ Nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^Nbt_FileHeaderData) {
     ints = make([dynamic]i32, 0, 64, context.temp_allocator),
     longs = make([dynamic]i64, 0, 4096, context.temp_allocator),
 
-    tags = make([dynamic]Nbt_Tag, 0, 64, context.temp_allocator),
+    tags = make([dynamic]Nbt_Tag, 0, 128, context.temp_allocator),
 
     lists = make([dynamic]Nbt_List, 0, 16, context.temp_allocator),
   }
@@ -389,6 +389,11 @@ Nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^Nbt_FileHeaderData) {
   // DESC(dendo): recursivaly decode the tags
   root_tag : Nbt_Tag
   read_tag_named(&reader, &root_tag)
+
+  assert(len(reader.tags) < (1 << 32))
+
+  root_tag_index := u32(len(reader.tags))
+  append(&reader.tags, root_tag)
 
   // DESC(dendo): calculate space and commit to permanent memory
 
@@ -415,6 +420,8 @@ Nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^Nbt_FileHeaderData) {
 
   if err == .None {
     header = cast(^Nbt_FileHeaderData)(&decoded_memory[0])
+
+    header.root_tag_index = root_tag_index;
 
     offset := size_of(Nbt_FileHeaderData)
 

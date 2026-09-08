@@ -54,6 +54,10 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
       return sdl3.AppResult.FAILURE
     }
 
+    if (!sdl3.SetHint(sdl3.HINT_MAIN_CALLBACK_RATE, "waitevent")) {
+      fmt.eprintfln("Failed to set main callback rate, SDL_ERROR: %s", sdl3.GetError())
+      return sdl3.AppResult.FAILURE
+    }
 
     platstate.renderer = sdl3.CreateRenderer(platstate.window, nil)
     if (platstate.renderer == nil) {
@@ -92,8 +96,11 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
 AppIterate :: proc "c" (appstate: rawptr) -> sdl3.AppResult {
   context = runtime.default_context()
 
-  microui_render(cast(^nbtfinder.AppState)appstate)
+  {
+    microui_render(cast(^nbtfinder.AppState)appstate)
+  }
 
+  free_all(context.temp_allocator)
   app_result := sdl3.AppResult.CONTINUE
   return app_result
 }

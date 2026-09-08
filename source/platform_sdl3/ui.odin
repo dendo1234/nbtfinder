@@ -42,9 +42,10 @@ microui_process_event :: proc (event: ^sdl3.Event) {
     case 3:
       fn(platstate.mu_context, i32(event.button.x), i32(event.button.y), .RIGHT)
     }
-
   case .MOUSE_MOTION:
     mu.input_mouse_move(platstate.mu_context, i32(event.motion.x), i32(event.motion.y))
+  case .MOUSE_WHEEL:
+    mu.input_scroll(platstate.mu_context, i32(event.wheel.x * 16), i32(event.wheel.y * -16))
   }
 }
 

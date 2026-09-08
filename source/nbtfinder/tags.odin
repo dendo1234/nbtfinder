@@ -102,6 +102,7 @@ Nbt_List :: union {
 
 Nbt_FileHeaderData :: struct {
   // NOTE: children are stored togheter
+  root_tag_index : u32,
   tags : []Nbt_Tag,
 
   // NOTE(dendo): these slices only contain data from the arrays Tagtypes themselves.
