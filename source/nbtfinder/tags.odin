@@ -22,7 +22,6 @@ Nbt_Values :: union {
 
 Nbt_Tag :: struct {
   // NOTE(dendo): nameless Nbt_Tag have name == 0
-  // TODO(dendo): Should we strees about storing nameless tags differently to save space?
   name : string,
   type : Nbt_TagType,
   value : Nbt_TagValue,
@@ -49,32 +48,12 @@ ArrayIndex :: distinct u32
 LongIndex :: distinct ArrayIndex
 DoubleIndex :: distinct ArrayIndex
 
-// NOTE(dendo): index to (an array of views to) arrays of bytes
-ByteViewIndex :: distinct ArrayIndex
-IntViewIndex :: distinct ArrayIndex
-LongViewIndex :: distinct ArrayIndex
-
 Nbt_ListIndex :: distinct ArrayIndex
 TagsViewIndex :: distinct ArrayIndex
 
-Nbt_TagValue :: struct #raw_union {
-  byte : i8,
-  short : i16,
-  integer : i32,
-  long : LongIndex,
-  float : f32,
-  double : DoubleIndex,
-  byte_array : ByteViewIndex,
-  str : string,
-  list : Nbt_ListIndex,
-  compound : TagsViewIndex,
-  int_array : IntViewIndex,
-  long_array : LongViewIndex,
-}
-
 ArrayView :: struct {
   start_index : u32,
-  count : u32
+  count : i32
 }
 
 // NOTE: Nbt actualy doesn't support arrays with more than (2^31 - 1) elemments becuase of Java, so this is safe
@@ -82,6 +61,22 @@ BytesView :: distinct ArrayView
 IntsView :: distinct ArrayView
 LongsView :: distinct ArrayView
 TagsView :: distinct ArrayView
+
+Nbt_TagValue :: struct #raw_union {
+  byte : i8,
+  short : i16,
+  integer : i32,
+  long : i64,
+  float : f32,
+  double : f64,
+  byte_array : BytesView,
+  str : string, // to be changed
+  list : TagsView, // NOTE(dendo): this is probably not the best, but good enought
+  compound : TagsView,
+  int_array : IntsView,
+  long_array : LongsView,
+}
+
 
 
 Nbt_List :: union {
@@ -109,22 +104,19 @@ Nbt_FileHeaderData :: struct {
   // NOTE: children are stored togheter
   tags : []Nbt_Tag,
 
-  // NOTE(dendo): these bytes and ints reagions only contain bytes and ints from byte_arrays and int_arrays,
-  // as the others are stored inplace in the Nbt_Tag structure
+  // NOTE(dendo): these slices only contain data from the arrays Tagtypes themselves.
+  // an actual long tag has it value stored inplace
   bytes : []i8,
   ints : []i32,
-
   longs : []i64,
-  doubles : []f64,
 
-  bytes_views : []BytesView,
-  ints_views : []IntsView,
-  longs_views : []LongsView,
+  //// NOTE: points to tags
+  //childrens : []TagsView,
+  //lists : []Nbt_List,
 
-  // NOTE: points to tags
-  childrens : []TagsView,
 
-  lists : []Nbt_List,
+  // NOTE(dendo): in practice the data from the slices is stored right after the header
+  // arrays : [?]u8
 }
 
 

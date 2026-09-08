@@ -18,6 +18,12 @@ microui_draw_commands :: proc(appstate : ^AppState, rect : mu.Rect) {
         fmt.println("Button Press")
       }
 
+      for tag in appstate.header.tags {
+        if (tag.name != "") {
+          mu.text(ctx, tag.name)
+        }
+      }
+
       mu.end_window(ctx)
     }
   }

@@ -1,5 +1,6 @@
 package nbtfinder
 
+import "base:runtime"
 import "base:intrinsics"
 import "core:bytes"
 import "core:compress/zlib"
@@ -25,7 +26,8 @@ window_specs : WindowSpecifications : {
 #assert (window_specs.title[len(window_specs.title)-1] == 0)
 
 AppState :: struct {
-  mu_context : mu.Context
+  mu_context : mu.Context,
+  header : ^Nbt_FileHeaderData
 }
 
 init :: proc(appstate : ^AppState) -> (mu_context : ^mu.Context, ok : bool) {
@@ -74,21 +76,16 @@ Mca_File :: struct {
 Nbt_Reader :: struct {
   is_big_endian_file : bool,
  
-  bytes : []u8,
+  raw_data : []u8,
   index : uint,
 
-  bytes_for_arrays : [dynamic]i8,
-  ints_for_arrays : [dynamic]i32,
+  bytes : [dynamic]i8,
+  ints : [dynamic]i32,
   longs : [dynamic]i64,
-  doubles : [dynamic]f64,
 
-  tags : [dynamic]Nbt_Tag
+  tags : [dynamic]Nbt_Tag,
 
-
-  bytes_views : [dynamic]BytesView,
-  ints_views : [dynamic]IntsView,
-  longs_views : [dynamic]LongsView,
-
+  lists : [dynamic]Nbt_List
 }
 
 // NOTE(dendo): for Nbt_readField and Nbt_readFieldAndConvert,
@@ -97,9 +94,9 @@ Nbt_Reader :: struct {
 // Some binary space could be saved by thinking of a better method
 Nbt_readFieldEndianSpecified :: proc(reader : ^Nbt_Reader, $type : typeid) -> (ret : type) {
   // WARN: assert that type is endian specified, this is not tested by the compiler
-  assert(len(reader.bytes)-int(reader.index + size_of(type)) >= 0, "nbt passer failed")
+  assert(len(reader.raw_data)-int(reader.index + size_of(type)) >= 0, "nbt passer failed")
 
-  ret = intrinsics.unaligned_load(cast(^type)&reader.bytes[reader.index])
+  ret = intrinsics.unaligned_load(cast(^type)&reader.raw_data[reader.index])
   reader.index += size_of(type)
   return
 }
@@ -151,12 +148,12 @@ Nbt_readField :: proc(reader : ^Nbt_Reader, $type : typeid) -> (ret : type) {
 Nbt_readString :: proc(reader : ^Nbt_Reader) -> (ret : string) {
   string_lenght := Nbt_readField(reader, u16)
 
-  assert(len(reader.bytes)-int(reader.index + uint(string_lenght)) >= 0, "nbt passer failed")
+  assert(len(reader.raw_data)-int(reader.index + uint(string_lenght)) >= 0, "nbt passer failed")
 
-  bytes_string := reader.bytes[reader.index:reader.index+uint(string_lenght)]
+  bytes_string := reader.raw_data[reader.index:reader.index+uint(string_lenght)]
   // TODO(dendo): it seams a bit dumb to allocate a string for every field when most of the fields repeat the sames strings
   // maybe implement a hash table with "known strings" and store them that way
-  str, err := strings.clone_from_bytes(bytes_string)
+  str, err := strings.clone_from_bytes(bytes_string, context.allocator)
   if err != nil {
     fmt.printfln("\nError: %v", err)
   }
@@ -168,23 +165,27 @@ Nbt_readString :: proc(reader : ^Nbt_Reader) -> (ret : string) {
 }
 
 // NOTE: Mutates reader arrays
-Nbt_readArray :: proc(reader : ^Nbt_Reader, $type : typeid) {
+read_tag_value_array :: proc(reader : ^Nbt_Reader, $type : typeid) -> (view : ArrayView) {
   size := Nbt_readField(reader, i32)
 
-  assert(len(reader.bytes)-int(reader.index + uint(size*size_of(type))) >= 0, "nbt passer failed")
+  assert(len(reader.raw_data)-int(reader.index + uint(size*size_of(type))) >= 0, "nbt passer failed")
 
   when type == i8 {
-    // TODO(dendo): this case, the unaligned read proc is not necessary in any architecture
+    // NOTE(dendo): this case, the unaligned read proc is not necessary in any architecture
     // because of the nature of the byte
-    array_ptr := &reader.bytes_for_arrays
+    array_ptr := &reader.bytes
   } else when type == i32 {
-    array_ptr := &reader.ints_for_arrays
+    array_ptr := &reader.ints
   } else when type == i64 {
     array_ptr := &reader.longs
   }
 
   reserve(array_ptr, len(array_ptr)+int(size))
 
+  assert(len(array_ptr) < 2 << 32)
+
+  view.start_index = u32(len(array_ptr));
+  view.count = size;
 
   // NOTE(dendo): because the values could be unaligned, they have to be read one by one sadly, AFAIK
   // NOTE(dendo): x86 doesn't seem to care too much about unaligned reads, so there might be some optimizations here
@@ -192,122 +193,255 @@ Nbt_readArray :: proc(reader : ^Nbt_Reader, $type : typeid) {
     value := Nbt_readField(reader, type)
     append(array_ptr, value)
   }
+
+  return
 }
 
 
+ReadResult :: enum {
+  ok, end, unknown_type, out_of_bounds
+}
+
+read_tag_named :: proc(reader : ^Nbt_Reader, tag : ^Nbt_Tag) -> (res: ReadResult) {
+  current_ptr : [^]u8 = mem.ptr_offset(slice.as_ptr(reader.raw_data), reader.index) // for easier debuging
+
+  tag.type = Nbt_TagType(reader.raw_data[reader.index])
+  reader.index += 1
+
+  if tag.type != .End {
+    // DESC: read key string after tag
+
+    // NOTE(dendo): does every tag (apart from lists) has a string name?? it seams so but you can't be sure
+    // minecraft.wiki says that only tags inside compound tags have names, but the root tag is always a compound tag
+    // maybe on bedrock nbt this is not true? It seams that there List could be the root.
+    // Even so, the root tag, usualy has a name with size == 0
+
+    tag.name = Nbt_readString(reader)
+    fmt.println(tag.name)
+  }
+
+  return read_tag_value(reader, tag)
+}
+
+read_tag_unnamed :: proc(reader : ^Nbt_Reader, tag: ^Nbt_Tag) -> (res: ReadResult) {
+  current_ptr : [^]u8 = mem.ptr_offset(slice.as_ptr(reader.raw_data), reader.index) // for easier debuging
+  tag.type = Nbt_TagType(reader.raw_data[reader.index])
+  reader.index += 1
+
+  return read_tag_value(reader, tag)
+}
+
+read_tag_value_compound :: proc(reader : ^Nbt_Reader, tag: ^Nbt_Tag) -> (res: ReadResult) {
+  children := make([dynamic]Nbt_Tag, 0, 4, context.temp_allocator)
+
+  last_res : ReadResult = .ok
+  for {
+    temp_tag : Nbt_Tag
+    last_res = read_tag_named(reader, &temp_tag)
+
+    if (last_res == .ok) {
+      append(&children, temp_tag)
+
+    } else {
+      break;
+    }
+  }
+
+  assert(last_res != .ok)
+  if last_res == .end {
+    start_index := len(reader.tags)
+    children_amount := len(children)
+    reserve(&reader.tags, len(reader.tags) + len(children))
+
+    for i := 0; i < children_amount; i += 1 {
+      append(&reader.tags, children[i])
+    }
+
+    assert(start_index >= 0 && start_index < (1 << 32))
+    assert(children_amount >= 0 && children_amount < (1 << 31))
+
+    tag.value.compound.start_index = u32(start_index)
+    tag.value.compound.count = i32(children_amount)
+
+    return .ok
+  } else {
+    return last_res
+  }
+}
+
+// NOTE(dendo): this is a pretty lazy implementation, as data and performance is concerned
+read_tag_value_list :: proc(reader : ^Nbt_Reader, tag: ^Nbt_Tag) -> (res: ReadResult) {
+  list_tag_type := Nbt_TagType(reader.raw_data[reader.index])
+  reader.index += 1
+
+  size := Nbt_readField(reader, i32)
+
+  children := make([dynamic]Nbt_Tag, 0, size, context.temp_allocator)
+
+  last_res : ReadResult = .ok
+  for i : i32 = 0; i < size; i += 1 {
+    temp_tag : Nbt_Tag
+    temp_tag.type = list_tag_type
+
+    last_res = read_tag_value(reader, &temp_tag)
+
+    if (last_res == .ok) {
+      append(&children, temp_tag)
+    } else {
+      break;
+    }
+  }
+
+  assert(last_res != .end)
+  if last_res == .ok {
+  // TODO(dendo): if size == 0, start_index = 0
+    start_index := len(reader.tags)
+    children_amount := len(children)
+    reserve(&reader.tags, len(reader.tags) + len(children))
+
+    for i := 0; i < children_amount; i += 1 {
+      append(&reader.tags, children[i])
+    }
+
+    assert(start_index >= 0 && start_index < (1 << 32))
+    assert(children_amount >= 0 && children_amount < (1 << 31))
+
+    tag.value.compound.start_index = u32(start_index)
+    tag.value.compound.count = i32(children_amount)
+
+    return .ok
+  } else {
+    return last_res
+  }
+}
+
+read_tag_value :: proc(reader : ^Nbt_Reader, tag: ^Nbt_Tag) -> (res: ReadResult) {
+  switch tag.type {
+    case .End:
+      return .end
+
+    case .Byte:
+      tag.value.byte = i8(reader.raw_data[reader.index])
+      reader.index += 1
+
+    case .Short:
+      tag.value.short = Nbt_readField(reader, i16)
+
+    case .Int:
+      tag.value.integer = Nbt_readField(reader, i32)
+
+    case .Long:
+      tag.value.long = Nbt_readField(reader, i64)
+
+    case .Float:
+      tag.value.float = Nbt_readField(reader, f32)
+
+    case .Double:
+      tag.value.double = Nbt_readField(reader, f64)
+
+    case .ByteArray:
+      tag.value.byte_array = BytesView(read_tag_value_array(reader, i8))
+
+    case .String:
+      // SEMI TODO:
+      str := Nbt_readString(reader)
+      fmt.println(str)
+      tag.value.str = str
+
+    case .List:
+      // NOTE(dendo): yes, we are using recursion
+      read_tag_value_list(reader, tag)
+
+    case .Compound:
+      // NOTE(dendo): yes, we are using recursion
+      read_tag_value_compound(reader, tag)
+
+    case .IntArray:
+      tag.value.int_array = IntsView(read_tag_value_array(reader, i32))
+
+    case .LongArray:
+      tag.value.long_array = LongsView(read_tag_value_array(reader, i64))
+
+    case:
+      return .unknown_type
+  }
+
+  return .ok
+}
+
 // NOTE(dendo): currently, this assumes Java nbt, i.e. big endian nbt
-Nbt_decode :: proc(nbt_bytes : []u8) {
+Nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^Nbt_FileHeaderData) {
   reader : Nbt_Reader = {
     is_big_endian_file = true,
-    bytes = nbt_bytes,
+    raw_data = nbt_bytes,
     index = 0,
     // TODO(dendo): find better starter size for dynamic arrays
     // TODO(dendo): test performance of context.temp_allocator
-    bytes_for_arrays = make([dynamic]i8, 0, 4096, context.temp_allocator),
-    ints_for_arrays = make([dynamic]i32, 0, 64, context.temp_allocator),
+    bytes = make([dynamic]i8, 0, 4096, context.temp_allocator),
+    ints = make([dynamic]i32, 0, 64, context.temp_allocator),
     longs = make([dynamic]i64, 0, 4096, context.temp_allocator),
-    doubles = make([dynamic]f64, 0, 64, context.temp_allocator),
 
     tags = make([dynamic]Nbt_Tag, 0, 64, context.temp_allocator),
 
-    bytes_views : make([dynamic]BytesView, 0, 16, context.temp_allocator),
-    ints_views : make([dynamic]IntsView, 0, 16, context.temp_allocator),
-    longs_views : make([dynamic]LongsView, 0, 16, context.temp_allocator),
+    lists = make([dynamic]Nbt_List, 0, 16, context.temp_allocator),
   }
 
-  nested_compound_tags := 1
+  // DESC(dendo): recursivaly decode the tags
+  root_tag : Nbt_Tag
+  read_tag_named(&reader, &root_tag)
 
-  for {
-    current_ptr : [^]u8 = mem.ptr_offset(slice.as_ptr(reader.bytes), reader.index)
-    tag : Nbt_Tag
-    tag.type = Nbt_TagType(reader.bytes[reader.index])
-    reader.index += 1
+  // DESC(dendo): calculate space and commit to permanent memory
 
-    if nested_compound_tags > 0 && tag.type != .End {
-      // DESC: read key string after tag
+  tags_count  := len(reader.tags)
+  bytes_count := len(reader.bytes)
+  ints_count  := len(reader.ints)
+  longs_count := len(reader.longs)
 
-      // NOTE(dendo): does every tag (apart from lists) has a string name?? it seams so but you can't be sure
-      // minecraft.wiki says that only tags inside compound tags have names, but the root tag is always a compound tag
-      // maybe on bedrock nbt this is not true? It seams that there List could be the root.
-      // Even so, the root tag, usualy has a name with size == 0
+  tags_bytes := tags_count*size_of(reader.tags[0])
+  bytes_bytes := bytes_count*size_of(reader.bytes[0])
+  ints_bytes := ints_count*size_of(reader.ints[0])
+  longs_bytes := longs_count*size_of(reader.longs[0])
 
-      tag.name = Nbt_readString(&reader)
-      fmt.println(tag.name)
+  decoded_size : int
 
-    }
+  decoded_size += size_of(Nbt_FileHeaderData)
+  decoded_size += tags_bytes
+  decoded_size += bytes_bytes
+  decoded_size += ints_bytes
+  decoded_size += longs_bytes
 
-    // DESC: read payload
-    switch tag.type {
-      case .End:
-        // TODO:
-        fmt.print("Compound")
+  decoded_memory, err := runtime.mem_alloc(decoded_size, alignment = 4096, allocator = context.allocator)
+  header = nil
 
-      case .Byte:
-        tag.value.byte = i8(reader.bytes[reader.index])
-        reader.index += 1
+  if err == .None {
+    header = cast(^Nbt_FileHeaderData)(&decoded_memory[0])
 
-      case .Short:
-        short := Nbt_readField(&reader, i16)
-        tag.value.short = i16(short)
+    offset := size_of(Nbt_FileHeaderData)
 
-      case .Int:
-        integer := Nbt_readField(&reader, i32)
-        tag.value.integer = i32(integer)
+    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(reader.tags), len = tags_bytes)
+    header.tags = slice.from_ptr(cast(^Nbt_Tag)(&decoded_memory[offset]), tags_count)
+    offset += tags_bytes
 
-      case .Long:
-        long := Nbt_readField(&reader, i64)
+    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(reader.bytes), len = bytes_bytes)
+    header.bytes = slice.from_ptr(cast(^i8)(&decoded_memory[offset]), bytes_count)
+    offset += bytes_bytes
 
-        assert(len(reader.longs) < (2 << 32))
-        tag.value.long = LongIndex(len(reader.longs))
+    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(reader.ints), len = ints_bytes)
+    header.ints = slice.from_ptr(cast(^i32)(&decoded_memory[offset]), ints_count)
+    offset += ints_bytes
 
-        append(&reader.longs, i64(long))
-
-      case .Float:
-        float := Nbt_readField(&reader, f32)
-        tag.value.float = f32(float)
-
-      case .Double:
-        double := Nbt_readField(&reader, f64)
-
-        assert(len(reader.doubles) < (2 << 32))
-        tag.value.double = DoubleIndex(len(reader.doubles))
-
-        append(&reader.doubles, f64(double))
-
-      case .ByteArray:
-        Nbt_readArray(&reader, i8)
-
-      case .String:
-        // SEMI TODO:
-        str := Nbt_readString(&reader)
-        fmt.println(str)
-        tag.value.str = str
-
-      case .List:
-        // SUPER  TODO:
-        tag := Nbt_TagType(reader.bytes[reader.index])
-        //nbt_readList(&reader, tag)
-
-      case .Compound:
-        // TODO:
-        fmt.print("Compound")
-
-      case .IntArray:
-        Nbt_readArray(&reader, i32)
-        tag.value.
-
-      case .LongArray:
-        Nbt_readArray(&reader, i64)
-    }
-
-    append(&reader.tags, tag)
+    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(reader.longs), len = longs_bytes)
+    header.longs = slice.from_ptr(cast(^i64)(&decoded_memory[offset]), longs_count)
+    offset += longs_bytes
+  } else {
+    assert(false)
   }
-
 
   free_all(context.temp_allocator)
+  return header
 }
 
-Mca_readAndDecompressChunk :: proc(file : ^os.File, mca_loc : Mca_Location) {
+Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_loc : Mca_Location) {
   offset, sector_lenght := McaLocation_getLenghtAndOffset(mca_loc)
 
   byte_offset : i64 = i64(offset)*mca_sector_size
@@ -341,11 +475,11 @@ Mca_readAndDecompressChunk :: proc(file : ^os.File, mca_loc : Mca_Location) {
 
   nbt_bytes := bytes.buffer_to_bytes(&nbt_buffer)
 
-  Nbt_decode(nbt_bytes)
+  appstate.header = Nbt_decode(nbt_bytes)
 
 }
 
-Mca_read :: proc(filename : string) {
+Mca_read :: proc(appstate : ^AppState, filename : string) {
   file, err := os.open(filename)
   defer os.close(file)
   if err != os.ERROR_NONE {
@@ -373,12 +507,10 @@ Mca_read :: proc(filename : string) {
 
   for mca_loc in mca.header_location {
     if (mca_loc != 0) {
-      Mca_readAndDecompressChunk(file, mca_loc)
+      Mca_readAndDecompressChunk(appstate, file, mca_loc)
 
       break
     }
   }
-
-
 }
 

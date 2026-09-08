@@ -79,10 +79,11 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
       return sdl3.AppResult.FAILURE
     }
     platstate.mu_context = mu_context
+
+    nbtfinder.Mca_read(memory, "r.0.0.mca")
   }
 
 
-  nbtfinder.Mca_read("r.0.0.mca")
 
   app_result := sdl3.AppResult.CONTINUE
   return app_result
