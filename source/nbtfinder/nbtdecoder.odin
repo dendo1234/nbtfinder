@@ -219,7 +219,7 @@ read_tag_named :: proc(decoder : ^NBT_Decoder, tag : ^NBT_Tag) -> (res: ReadResu
     // Even so, the root tag, usualy has a name with size == 0
 
     tag.name = read_tag_value_string(decoder)
-    fmt.println(tag.name)
+    //fmt.println(tag.name)
   }
 
   return read_tag_value(decoder, tag)
@@ -347,7 +347,7 @@ read_tag_value :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: ReadResul
     case .String:
       // SEMI TODO:
       str := read_tag_value_string(decoder)
-      fmt.println(str)
+      //fmt.println(str)
       tag.value.str = str
 
     case .List:

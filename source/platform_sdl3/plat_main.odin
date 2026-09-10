@@ -9,6 +9,8 @@ import "core:fmt"
 import "vendor:sdl3"
 import mu "vendor:microui"
 
+import win "core:sys/windows"
+
 PlatformState :: struct {
   window : ^sdl3.Window,
   renderer : ^sdl3.Renderer,
@@ -41,7 +43,12 @@ main :: proc () {
 AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.AppResult {
   context = runtime.default_context()
 
-  fmt.print(size_of(nbtfinder.NBT_Value))
+  // NOTE(dendo): prety lazy fix to make windows tolerate utf8 on the terminal
+  {
+    when ODIN_OS == .Windows {
+      win.SetConsoleOutputCP(win.CODEPAGE.UTF8)
+    }
+  }
 
   // DESC: plataform init
   {
