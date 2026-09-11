@@ -9,6 +9,7 @@ import "core:mem"
 import "core:slice"
 import "core:simd"
 import "core:time"
+import si "core:sys/info"
 
 TEST_REPEAT_COUNT :: 4
 STRIDE_COUNT :: 16
@@ -77,7 +78,7 @@ test_unaligned_scalar_core_i32be :: proc(bytes: []u8, durations: []time.Duration
   return int(acc)
 }
 
-test_unaligned_simd :: proc(bytes: []u8, durations: []time.Duration, $type: typeid, $simd_type: typeid) -> int {
+test_unaligned_simd :: #force_inline proc(bytes: []u8, durations: []time.Duration, $type: typeid, $simd_type: typeid) -> int {
   acc : type
   acc_vec: simd_type = 0
   size := len(bytes) - STRIDE_COUNT
@@ -121,17 +122,26 @@ test_unaligned_sse_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int
   return test_unaligned_simd(bytes, durations, i32, #simd[4]i32)
 }
 
-test_unaligned_avx_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
+@(enable_target_feature="avx,avx2")
+test_unaligned_avx2_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
   return test_unaligned_simd(bytes, durations, i32, #simd[8]i32)
 }
 
+@(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
 test_unaligned_avx512_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
   return test_unaligned_simd(bytes, durations, i32, #simd[16]i32)
 }
 
-statistics_from_durations :: proc(durations: []time.Duration) -> (avg: time.Duration, p95 : time.Duration,  std_deviation: time.Duration) {
+Statistics :: struct {
+  avg: time.Duration,
+  p95: time.Duration,
+  std_deviation: time.Duration
+}
+
+statistics_from_durations :: proc(durations: []time.Duration) -> Statistics {
   size := len(durations)
 
+  avg : time.Duration = 0
   for i := 0; i < size; i += 1 {
     avg += durations[i]/time.Duration(size)
   }
@@ -139,6 +149,7 @@ statistics_from_durations :: proc(durations: []time.Duration) -> (avg: time.Dura
 
   count95 := size / 20
 
+  p95 : time.Duration = 0
   for i := 0; i < count95; i += 1 {
     p95 += durations[i]/time.Duration(count95)
   }
@@ -149,9 +160,15 @@ statistics_from_durations :: proc(durations: []time.Duration) -> (avg: time.Dura
     variance += deviation*deviation
   }
   variance /= f64(size)
-  std_deviation = time.Duration(math.sqrt(variance))
+  std_deviation := time.Duration(math.sqrt(variance))
 
-  return
+  return {avg, p95, std_deviation}
+}
+
+should_retry :: proc(statistics: Statistics) -> bool {
+  relative_std_deviation : f64 = f64(statistics.std_deviation)/f64(statistics.avg)
+  // NOTE(dendo): this is pretty arbritary
+  return relative_std_deviation > 0.15
 }
 
 run_test :: proc(
@@ -160,27 +177,37 @@ run_test :: proc(
   test_proc: proc(bytes: []u8, durations: []time.Duration) -> int,
   name : string,
   repetition_count: int = TEST_REPEAT_COUNT
-) -> (avg: time.Duration, p95: time.Duration, std_deviation: time.Duration) {
-
+) -> Statistics {
   resize(durations, repetition_count * STRIDE_COUNT)
 
-  result : int = 0
-  for i := 0; i < repetition_count; i += 1 {
-    result += test_proc(bytes, durations[i*STRIDE_COUNT:i*STRIDE_COUNT+STRIDE_COUNT])
-  }
-  avg, p95, std_deviation = statistics_from_durations(durations[:])
-  fmt.printfln("%40v - result: %v, avg: %v, p95 : %v, std_deviation: %v", name, result, avg, p95, std_deviation)
+  statistics: Statistics
+  for tries := 10; tries >= 0; tries -= 1 {
 
-  resize(durations, 0)
-  return
+    result : int = 0
+    for i := 0; i < repetition_count; i += 1 {
+      result += test_proc(bytes, durations[i*STRIDE_COUNT:i*STRIDE_COUNT+STRIDE_COUNT])
+    }
+    statistics = statistics_from_durations(durations[:])
+    relative_std_deviation : f64 = f64(statistics.std_deviation)/f64(statistics.avg)
+    fmt.printfln("%40v - result: %v, %v, %v", name, result, statistics, relative_std_deviation)
+
+    if !should_retry(statistics) {
+      break
+    }
+  }
+
+  return statistics
 }
 
-run_tests :: proc() {
-  stopwatch : time.Stopwatch
+Compute_Methods :: enum {
+  Scalar = 0,
+  Sse = 1,
+  Avx = 2,
+  Avx512 = 3
+}
 
-  time.stopwatch_reset(&stopwatch);
-
-  MiB :: 5 << 20
+run_tests :: proc() -> Compute_Methods {
+  MiB :: 10 << 20
   bytes, err := mem.alloc_bytes_non_zeroed(MiB, alignment = mem.DEFAULT_ALIGNMENT)
   durations, err2 := make([dynamic]time.Duration, 0, 16)
 
@@ -191,23 +218,45 @@ run_tests :: proc() {
 
   assert(ok)
 
+  statistics : [4]Statistics
 
-  fmt.println("Starting performance tests")
-  run_test(bytes, &durations, test_unaligned_scalar_core_i32be, "test_unaligned_scalar_core_i32be")
-  run_test(bytes, &durations, test_unaligned_scalar_i32be, "test_unaligned_scalar_i32be")
-  run_test(bytes, &durations, test_unaligned_sse_i32be , "test_unaligned_sse_i32be")
-  run_test(bytes, &durations, test_unaligned_avx_i32be , "test_unaligned_avx_i32be")
-  run_test(bytes, &durations, test_unaligned_avx512_i32be , "test_unaligned_avx512_i32be")
+  statistics[0] = run_test(bytes, &durations, test_unaligned_scalar_i32be, "test_unaligned_scalar_i32be")
 
-  fmt.println("Second run")
-  run_test(bytes, &durations, test_unaligned_scalar_core_i32be, "test_unaligned_scalar_core_i32be")
-  run_test(bytes, &durations, test_unaligned_scalar_i32be, "test_unaligned_scalar_i32be")
-  run_test(bytes, &durations, test_unaligned_sse_i32be , "test_unaligned_sse_i32be")
-  run_test(bytes, &durations, test_unaligned_avx_i32be , "test_unaligned_avx_i32be")
-  run_test(bytes, &durations, test_unaligned_avx512_i32be , "test_unaligned_avx512_i32be")
+  if true {
+    statistics[1] = run_test(bytes, &durations, test_unaligned_sse_i32be , "test_unaligned_sse_i32be")
+  }
 
+  avx2_test := si.CPU_Features{ .avx, .avx2 }
+  if avx2_test <= si.cpu_features() {
+    statistics[2] = run_test(bytes, &durations, test_unaligned_avx2_i32be , "test_unaligned_avx2_i32be")
+  }
+
+  avx512_test := si.CPU_Features{ .avx512f, .avx512vl, .avx512dq, .avx512bw }
+  if avx512_test <= si.cpu_features() {
+    statistics[3] = run_test(bytes, &durations, test_unaligned_avx512_i32be , "test_unaligned_avx512_i32be")
+  }
+
+  best: Compute_Methods = .Scalar
+  best_avg := statistics[0].avg
+
+  if statistics[1].avg != 0 && statistics[1].avg < best_avg {
+    best = .Sse
+    best_avg = statistics[1].avg
+  }
+
+  if statistics[2].avg != 0 && statistics[2].avg < best_avg {
+    best = .Avx
+    best_avg = statistics[2].avg
+  }
+
+  if statistics[3].avg != 0 && statistics[3].avg < best_avg {
+    best = .Avx512
+    best_avg = statistics[3].avg
+  }
 
   delete(bytes)
   delete(durations)
+
+  return best
 
 }

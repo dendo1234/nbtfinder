@@ -14,9 +14,7 @@ if "%2"=="asm" (
   set "arg2="
 )
 
-set "extra=-microarch:znver4"
-
 
 pushd build
-odin build ..\source\platform_sdl3\ -debug %extra% -out:nbtfinder.exe %arg% %arg2%
+odin build ..\source\platform_sdl3\ -debug -out:nbtfinder.exe %arg% %arg2%
 popd
