@@ -27,7 +27,7 @@ init :: proc(appstate : ^AppState) -> (mu_context : ^mu.Context, ok : bool) {
   mu_context.text_width  = mu.default_atlas_text_width
   mu_context.text_height = mu.default_atlas_text_height
 
-  //run_tests()
+  run_tests()
 
   return mu_context, true
 }
