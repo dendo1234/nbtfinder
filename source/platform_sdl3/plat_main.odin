@@ -5,6 +5,7 @@ import "core:os"
 import "base:runtime"
 import "core:strings"
 import "core:fmt"
+import si "core:sys/info"
 
 import "vendor:sdl3"
 import mu "vendor:microui"
@@ -77,6 +78,24 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
     }
   }
 
+  cpu_features : nbtfinder.CPU_Features
+  {
+    when ODIN_ARCH == .amd64 {
+      cpu_features += { .SIMD_128_bits }
+
+      avx2_test := si.CPU_Features{ .avx, .avx2 }
+      if avx2_test <= si.cpu_features() {
+        cpu_features += { .SIMD_256_bits }
+      }
+
+      avx512_test := si.CPU_Features{ .avx512f, .avx512vl, .avx512dq, .avx512bw }
+      if avx512_test <= si.cpu_features() {
+        cpu_features += { .SIMD_512_bits }
+      }
+    }
+
+  }
+
   // DESC: app init
   {
     memory, err := new(nbtfinder.AppState)
@@ -85,7 +104,7 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
     }
     appstate^ = memory;
 
-    mu_context, ok := nbtfinder.init(memory);
+    mu_context, ok := nbtfinder.init(memory, cpu_features);
     if (!ok) {
       return sdl3.AppResult.FAILURE
     }

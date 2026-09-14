@@ -9,7 +9,6 @@ import "core:mem"
 import "core:slice"
 import "core:simd"
 import "core:time"
-import si "core:sys/info"
 
 TEST_REPEAT_COUNT :: 4
 STRIDE_COUNT :: 16
@@ -118,19 +117,32 @@ test_unaligned_simd :: #force_inline proc(bytes: []u8, durations: []time.Duratio
   return int(acc)
 }
 
-test_unaligned_sse_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
+test_unaligned_simd128_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
   return test_unaligned_simd(bytes, durations, i32, #simd[4]i32)
 }
 
-@(enable_target_feature="avx,avx2")
-test_unaligned_avx2_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
-  return test_unaligned_simd(bytes, durations, i32, #simd[8]i32)
+when ODIN_ARCH == .amd64 {
+  @(enable_target_feature="avx,avx2")
+  test_unaligned_simd256_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
+    return test_unaligned_simd(bytes, durations, i32, #simd[8]i32)
+  }
+} else {
+  test_unaligned_simd256_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
+    return test_unaligned_simd(bytes, durations, i32, #simd[8]i32)
+  }
 }
 
-@(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
-test_unaligned_avx512_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
-  return test_unaligned_simd(bytes, durations, i32, #simd[16]i32)
+when ODIN_ARCH == .amd64 {
+  @(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
+  test_unaligned_simd512_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
+    return test_unaligned_simd(bytes, durations, i32, #simd[16]i32)
+  }
+} else {
+  test_unaligned_simd512_i32be :: proc(bytes: []u8, durations: []time.Duration) -> int {
+    return test_unaligned_simd(bytes, durations, i32, #simd[16]i32)
+  }
 }
+
 
 Statistics :: struct {
   avg: time.Duration,
@@ -201,12 +213,12 @@ run_test :: proc(
 
 Compute_Methods :: enum {
   Scalar = 0,
-  Sse = 1,
-  Avx = 2,
-  Avx512 = 3
+  SIMD_128_bits = 1,
+  SIMD_256_bits = 2,
+  SIMD_512_bits = 3
 }
 
-run_tests :: proc() -> Compute_Methods {
+run_tests :: proc(cpu_features: CPU_Features) -> Compute_Methods {
   MiB :: 10 << 20
   bytes, err := mem.alloc_bytes_non_zeroed(MiB, alignment = mem.DEFAULT_ALIGNMENT)
   durations, err2 := make([dynamic]time.Duration, 0, 16)
@@ -222,35 +234,33 @@ run_tests :: proc() -> Compute_Methods {
 
   statistics[0] = run_test(bytes, &durations, test_unaligned_scalar_i32be, "test_unaligned_scalar_i32be")
 
-  if true {
-    statistics[1] = run_test(bytes, &durations, test_unaligned_sse_i32be , "test_unaligned_sse_i32be")
+  if .SIMD_128_bits in cpu_features {
+    statistics[1] = run_test(bytes, &durations, test_unaligned_simd128_i32be, "test_unaligned_simd128_i32be")
   }
 
-  avx2_test := si.CPU_Features{ .avx, .avx2 }
-  if avx2_test <= si.cpu_features() {
-    statistics[2] = run_test(bytes, &durations, test_unaligned_avx2_i32be , "test_unaligned_avx2_i32be")
+  if .SIMD_256_bits in cpu_features {
+    statistics[2] = run_test(bytes, &durations, test_unaligned_simd256_i32be, "test_unaligned_simd256_i32be")
   }
 
-  avx512_test := si.CPU_Features{ .avx512f, .avx512vl, .avx512dq, .avx512bw }
-  if avx512_test <= si.cpu_features() {
-    statistics[3] = run_test(bytes, &durations, test_unaligned_avx512_i32be , "test_unaligned_avx512_i32be")
+  if .SIMD_512_bits in cpu_features {
+    statistics[3] = run_test(bytes, &durations, test_unaligned_simd512_i32be, "test_unaligned_simd512_i32be")
   }
 
   best: Compute_Methods = .Scalar
   best_avg := statistics[0].avg
 
   if statistics[1].avg != 0 && statistics[1].avg < best_avg {
-    best = .Sse
+    best = .SIMD_128_bits
     best_avg = statistics[1].avg
   }
 
   if statistics[2].avg != 0 && statistics[2].avg < best_avg {
-    best = .Avx
+    best = .SIMD_256_bits
     best_avg = statistics[2].avg
   }
 
   if statistics[3].avg != 0 && statistics[3].avg < best_avg {
-    best = .Avx512
+    best = .SIMD_512_bits
     best_avg = statistics[3].avg
   }
 

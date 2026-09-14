@@ -184,7 +184,7 @@ read_tag_value_array :: proc(decoder : ^NBT_Decoder, $type : typeid) -> (view : 
 
   reserve(array_ptr, len(array_ptr)+int(size))
 
-  assert(len(array_ptr) < 2 << 32)
+  assert(len(array_ptr) <= (1 << 32)-1)
 
   view.start_index = u32(len(array_ptr));
   view.count = size;
@@ -259,8 +259,8 @@ read_tag_value_compound :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: 
       append(&decoder.tags, children[i])
     }
 
-    assert(start_index >= 0 && start_index < (1 << 32))
-    assert(children_amount >= 0 && children_amount < (1 << 31))
+    assert(start_index <= (1 << 32)-1)
+    assert(children_amount <= (1 << 31)-1)
 
     tag.value.compound.start_index = u32(start_index)
     tag.value.compound.count = i32(children_amount)
@@ -305,8 +305,9 @@ read_tag_value_list :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: Read
       append(&decoder.tags, children[i])
     }
 
-    assert(start_index >= 0 && start_index < (1 << 32))
-    assert(children_amount >= 0 && children_amount < (1 << 31))
+
+    assert(start_index <= (1 << 32)-1)
+    assert(children_amount <= (1 << 31)-1)
 
     tag.value.compound.start_index = u32(start_index)
     tag.value.compound.count = i32(children_amount)
@@ -390,7 +391,7 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header) {
   root_tag : NBT_Tag
   read_tag_named(&decoder, &root_tag)
 
-  assert(len(decoder.tags) < (1 << 32))
+  assert(len(decoder.tags) <= (1 << 32)-1)
 
   root_tag_index := u32(len(decoder.tags))
   append(&decoder.tags, root_tag)

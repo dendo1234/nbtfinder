@@ -14,7 +14,9 @@ if "%2"=="asm" (
   set "arg2="
 )
 
+REM set "features=-target-features:avx,avx2,avx512f,avx512bw,avx512vl,avx512dq"
+
 
 pushd build
-odin build ..\source\platform_sdl3\ -debug -out:nbtfinder.exe %arg% %arg2%
+odin build ..\source\platform_sdl3\ -debug %features% %arg% %arg2% -out:nbtfinder.exe 
 popd
