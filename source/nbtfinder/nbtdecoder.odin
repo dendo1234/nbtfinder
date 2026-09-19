@@ -4,8 +4,10 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:simd"
 import "core:slice"
 import "core:strings"
+import "core:time"
 
 
 NBT_Type :: enum u8 {
@@ -164,6 +166,68 @@ read_tag_value_string :: proc(decoder : ^NBT_Decoder) -> (ret : string) {
 
   decoder.index += uint(string_lenght)
   return str
+}
+
+read_tag_value_list_array_simd :: #force_inline proc(decoder: ^NBT_Decoder, $simd_type: typeid, $should_byte_swap: bool) -> (view: ArrayView) {
+  size := read_tag_value_number(decoder, i32)
+  if (size == 0) {
+    view.start_index = 0
+    view.count = 0
+    return
+  }
+  assert(size >= 0)
+  elem_type :: intrinsics.type_elem_type(simd_type)
+
+  assert(len(decoder.raw_data)-int(decoder.index + uint(size*size_of(elem_type))) >= 0, "nbt passer failed")
+
+  when elem_type == i8 {
+    array_ptr := &decoder.bytes
+  } else when elem_type == i32 {
+    array_ptr := &decoder.ints
+  } else when elem_type == i64 {
+    array_ptr := &decoder.longs
+  }
+
+  assert(len(array_ptr) <= (1 << 32)-1)
+  view.start_index = u32(len(array_ptr));
+  view.count = size;
+
+  dst_index := len(array_ptr)
+
+  resize(array_ptr, len(array_ptr)+int(size))
+
+  end_point := decoder.index + uint(size*size_of(elem_type))
+
+  // stop before last vector
+  for ; decoder.index < end_point-size_of(simd_type); decoder.index += size_of(simd_type) {
+    vec := intrinsics.unaligned_load(cast(^simd_type)&decoder.raw_data[decoder.index])
+    when should_byte_swap {
+      vec = simd.byte_swap(vec)
+    }
+
+    intrinsics.unaligned_store(cast(^simd_type)&array_ptr[dst_index], vec)
+    dst_index += size_of(simd_type)/size_of(elem_type)
+  }
+
+  // load last vector
+  assert(end_point - decoder.index <= size_of(simd_type))
+  bytes_to_load := (end_point-decoder.index)
+  elems_to_load := bytes_to_load / size_of(intrinsics.type_elem_type(simd_type))
+
+  test : simd_type = elem_type(elems_to_load)
+  iota := simd.iota(simd_type)
+  mask := simd_type(simd.lanes_lt(iota, test))
+
+  vec := simd.masked_load(&decoder.raw_data[decoder.index], cast(simd_type)0, mask)
+  when should_byte_swap {
+    vec = simd.byte_swap(vec)
+  }
+
+  simd.masked_store(&array_ptr[dst_index], vec, mask)
+
+  decoder.index += bytes_to_load
+
+  return 
 }
 
 // NOTE: Mutates decoder arrays
@@ -343,7 +407,7 @@ read_tag_value :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: ReadResul
       tag.value.double = read_tag_value_number(decoder, f64)
 
     case .ByteArray:
-      tag.value.byte_array = BytesView(read_tag_value_array(decoder, i8))
+      tag.value.byte_array = read_byte_array(decoder)
 
     case .String:
       // SEMI TODO:
@@ -360,10 +424,10 @@ read_tag_value :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: ReadResul
       read_tag_value_compound(decoder, tag)
 
     case .IntArray:
-      tag.value.int_array = IntsView(read_tag_value_array(decoder, i32))
+      tag.value.int_array = read_int_array(decoder)
 
     case .LongArray:
-      tag.value.long_array = LongsView(read_tag_value_array(decoder, i64))
+      tag.value.long_array = read_long_array(decoder)
 
     case:
       return .unknown_type
@@ -372,8 +436,138 @@ read_tag_value :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: ReadResul
   return .ok
 }
 
+@(thread_local) read_byte_array : proc(^NBT_Decoder) -> BytesView
+@(thread_local) read_int_array : proc(^NBT_Decoder) -> IntsView
+@(thread_local) read_long_array : proc(^NBT_Decoder) -> LongsView
+
+// WARNING(dendo): bunch of template instantiation incoming!!!!!
+// On a side note, having to manualy instantiate every possible combination
+// really shows the amount of code that I'm generating here.
+// TODO(dendo): verify if this bunch of proc instantiation is worth it,
+// or if the branches aprouch is just better
+read_byte_array_scalar :: proc (decoder: ^NBT_Decoder) -> BytesView {
+  return BytesView(read_tag_value_array(decoder, i8))
+}
+read_int_array_scalar :: proc (decoder: ^NBT_Decoder) -> IntsView {
+  return IntsView(read_tag_value_array(decoder, i32))
+}
+read_long_array_scalar :: proc (decoder: ^NBT_Decoder) -> LongsView {
+  return LongsView(read_tag_value_array(decoder, i64))
+}
+
+read_byte_array_simd_128 :: proc (decoder: ^NBT_Decoder) -> BytesView {
+  return BytesView(read_tag_value_list_array_simd(decoder, #simd[16]i8, false))
+}
+
+read_int_array_simd_128_swap :: proc (decoder: ^NBT_Decoder) -> IntsView {
+  return IntsView(read_tag_value_list_array_simd(decoder, #simd[4]i32, true))
+}
+read_int_array_simd_128_noswap :: proc (decoder: ^NBT_Decoder) -> IntsView {
+  return IntsView(read_tag_value_list_array_simd(decoder, #simd[4]i32, false))
+}
+
+read_long_array_simd_128_swap :: proc (decoder: ^NBT_Decoder) -> LongsView {
+  return LongsView(read_tag_value_list_array_simd(decoder, #simd[2]i64, true))
+}
+read_long_array_simd_128_noswap :: proc (decoder: ^NBT_Decoder) -> LongsView {
+  return LongsView(read_tag_value_list_array_simd(decoder, #simd[2]i64, false))
+}
+
+@(enable_target_feature="avx,avx2")
+read_byte_array_simd_256 :: proc (decoder: ^NBT_Decoder) -> BytesView {
+  return BytesView(read_tag_value_list_array_simd(decoder, #simd[32]i8, false))
+}
+
+@(enable_target_feature="avx,avx2")
+read_int_array_simd_256_swap :: proc (decoder: ^NBT_Decoder) -> IntsView {
+  return IntsView(read_tag_value_list_array_simd(decoder, #simd[8]i32, true))
+}
+@(enable_target_feature="avx,avx2")
+read_int_array_simd_256_noswap :: proc (decoder: ^NBT_Decoder) -> IntsView {
+  return IntsView(read_tag_value_list_array_simd(decoder, #simd[8]i32, false))
+}
+
+@(enable_target_feature="avx,avx2")
+read_long_array_simd_256_swap :: proc (decoder: ^NBT_Decoder) -> LongsView {
+  return LongsView(read_tag_value_list_array_simd(decoder, #simd[4]i64, true))
+}
+@(enable_target_feature="avx,avx2")
+read_long_array_simd_256_noswap :: proc (decoder: ^NBT_Decoder) -> LongsView {
+  return LongsView(read_tag_value_list_array_simd(decoder, #simd[4]i64, false))
+}
+
+@(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
+read_byte_array_simd_512 :: proc (decoder: ^NBT_Decoder) -> BytesView {
+  return BytesView(read_tag_value_list_array_simd(decoder, #simd[64]i8, false))
+}
+
+@(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
+read_int_array_simd_512_swap :: proc (decoder: ^NBT_Decoder) -> IntsView {
+  return IntsView(read_tag_value_list_array_simd(decoder, #simd[16]i32, true))
+}
+@(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
+read_int_array_simd_512_noswap :: proc (decoder: ^NBT_Decoder) -> IntsView {
+  return IntsView(read_tag_value_list_array_simd(decoder, #simd[16]i32, false))
+}
+
+@(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
+read_long_array_simd_512_swap :: proc (decoder: ^NBT_Decoder) -> LongsView {
+  return LongsView(read_tag_value_list_array_simd(decoder, #simd[8]i64, true))
+}
+@(enable_target_feature="avx512f,avx512bw,avx512vl,avx512dq")
+read_long_array_simd_512_noswap :: proc (decoder: ^NBT_Decoder) -> LongsView {
+  return LongsView(read_tag_value_list_array_simd(decoder, #simd[8]i64, false))
+}
+
+// NOTE(dendo): man, that bunch of intantiations were loooooong
+
+nbt_decode_set_procedures :: proc(best: Compute_Methods, should_swap: bool) {
+  switch (best) {
+    case .Scalar:
+      read_byte_array = read_byte_array_scalar
+      read_int_array = read_int_array_scalar
+      read_long_array = read_long_array_scalar
+    case .SIMD_128_bits:
+      read_byte_array = read_byte_array_simd_128
+      if should_swap {
+        read_int_array = read_int_array_simd_128_swap
+        read_long_array = read_long_array_simd_128_swap
+      } else {
+        read_int_array = read_int_array_simd_128_noswap
+        read_long_array = read_long_array_simd_128_noswap
+      }
+    case .SIMD_256_bits:
+      read_byte_array = read_byte_array_simd_256
+      if should_swap {
+        read_int_array = read_int_array_simd_256_swap
+        read_long_array = read_long_array_simd_256_swap
+      } else {
+        read_int_array = read_int_array_simd_256_noswap
+        read_long_array = read_long_array_simd_256_noswap
+      }
+    case .SIMD_512_bits:
+      read_byte_array = read_byte_array_simd_512
+      if should_swap {
+        read_int_array = read_int_array_simd_512_swap
+        read_long_array = read_long_array_simd_512_swap
+      } else {
+        read_int_array = read_int_array_simd_512_noswap
+        read_long_array = read_long_array_simd_512_noswap
+      }
+  }
+}
+
+Timing_Info :: struct {
+  first_lap: time.Duration,
+  second_lap: time.Duration,
+  full_time: time.Duration,
+  mibibytes_per_sec: f64,
+}
+
 // NOTE(dendo): currently, this assumes Java nbt, i.e. big endian nbt
-nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header) {
+nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: Timing_Info) {
+  tick := time.tick_now()
+
   decoder : NBT_Decoder = {
     is_big_endian_file = true,
     raw_data = nbt_bytes,
@@ -395,6 +589,8 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header) {
 
   root_tag_index := u32(len(decoder.tags))
   append(&decoder.tags, root_tag)
+
+  timing.first_lap = time.tick_since(tick)
 
   // DESC(dendo): calculate space and commit to permanent memory
 
@@ -426,19 +622,20 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header) {
 
     offset := size_of(NBT_Decoded_Header)
 
-    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(decoder.tags), len = tags_bytes)
+    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.tags), len = tags_bytes)
     header.tags = slice.from_ptr(cast(^NBT_Tag)(&decoded_memory[offset]), tags_count)
     offset += tags_bytes
 
-    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(decoder.bytes), len = bytes_bytes)
+    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.bytes), len = bytes_bytes)
     header.bytes = slice.from_ptr(cast(^i8)(&decoded_memory[offset]), bytes_count)
     offset += bytes_bytes
 
-    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(decoder.ints), len = ints_bytes)
+    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.ints), len = ints_bytes)
     header.ints = slice.from_ptr(cast(^i32)(&decoded_memory[offset]), ints_count)
     offset += ints_bytes
 
-    runtime.mem_copy(dst = &decoded_memory[offset], src = raw_data(decoder.longs), len = longs_bytes)
+    // TODO(dendo): does this errors if len = 0 ??
+    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.longs), len = longs_bytes)
     header.longs = slice.from_ptr(cast(^i64)(&decoded_memory[offset]), longs_count)
     offset += longs_bytes
   } else {
@@ -446,5 +643,12 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header) {
   }
 
   free_all(context.temp_allocator)
-  return header
+
+  timing.full_time = time.tick_since(tick)
+  timing.second_lap = timing.full_time - timing.first_lap
+  mibibytes_processed := f64(len(nbt_bytes))/(1024.0*1024.0)
+  mibibytes_per_nanosec := mibibytes_processed/f64(timing.full_time)
+  timing.mibibytes_per_sec = mibibytes_per_nanosec * 1e9
+
+  return header, timing
 }

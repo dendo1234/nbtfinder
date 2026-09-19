@@ -201,7 +201,7 @@ run_test :: proc(
     }
     statistics = statistics_from_durations(durations[:])
     relative_std_deviation : f64 = f64(statistics.std_deviation)/f64(statistics.avg)
-    fmt.printfln("%40v - result: %v, %v, %v", name, result, statistics, relative_std_deviation)
+    //fmt.printfln("%40v - result: %v, %v, %v", name, result, statistics, relative_std_deviation)
 
     if !should_retry(statistics) {
       break
@@ -211,14 +211,7 @@ run_test :: proc(
   return statistics
 }
 
-Compute_Methods :: enum {
-  Scalar = 0,
-  SIMD_128_bits = 1,
-  SIMD_256_bits = 2,
-  SIMD_512_bits = 3
-}
-
-run_tests :: proc(cpu_features: CPU_Features) -> Compute_Methods {
+run_tests :: proc(cpu_features: CPU_Features) -> (best: Compute_Methods) {
   MiB :: 10 << 20
   bytes, err := mem.alloc_bytes_non_zeroed(MiB, alignment = mem.DEFAULT_ALIGNMENT)
   durations, err2 := make([dynamic]time.Duration, 0, 16)
@@ -246,7 +239,7 @@ run_tests :: proc(cpu_features: CPU_Features) -> Compute_Methods {
     statistics[3] = run_test(bytes, &durations, test_unaligned_simd512_i32be, "test_unaligned_simd512_i32be")
   }
 
-  best: Compute_Methods = .Scalar
+  best = .Scalar
   best_avg := statistics[0].avg
 
   if statistics[1].avg != 0 && statistics[1].avg < best_avg {

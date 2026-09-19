@@ -1,5 +1,6 @@
 package nbtfinder
 
+import "core:fmt"
 import mu "vendor:microui"
 
 WindowSpecifications :: struct {
@@ -14,9 +15,17 @@ window_specs : WindowSpecifications : {
 }
 #assert (window_specs.title[len(window_specs.title)-1] == 0)
 
+Compute_Methods :: enum {
+  Scalar = 0,
+  SIMD_128_bits = 1,
+  SIMD_256_bits = 2,
+  SIMD_512_bits = 3
+}
+
 AppState :: struct {
-  mu_context : mu.Context,
-  header : ^NBT_Decoded_Header
+  mu_context: mu.Context,
+  compute_method: Compute_Methods,
+  header: ^NBT_Decoded_Header
 }
 
 CPU_Feature :: enum {
@@ -27,7 +36,6 @@ CPU_Feature :: enum {
 
 CPU_Features :: bit_set[CPU_Feature]
 
-
 init :: proc(appstate : ^AppState, cpu_features : CPU_Features) -> (mu_context : ^mu.Context, ok : bool) {
 
   mu.init(&appstate.mu_context)
@@ -36,7 +44,17 @@ init :: proc(appstate : ^AppState, cpu_features : CPU_Features) -> (mu_context :
   mu_context.text_width  = mu.default_atlas_text_width
   mu_context.text_height = mu.default_atlas_text_height
 
-  run_tests(cpu_features)
+  best := run_tests(cpu_features)
+
+  fmt.println(best)
+  appstate.compute_method = best
+
+  switch (best) {
+    case .Scalar:
+    case .SIMD_128_bits:
+    case .SIMD_256_bits:
+    case .SIMD_512_bits:
+  }
 
   return mu_context, true
 }

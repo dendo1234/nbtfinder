@@ -8,8 +8,8 @@ if "%1"=="release" (
   set "arg="
 )
 
-if "%2"=="asm" (
-  set "arg2=-build-mode:asm"
+if "%2"=="native" (
+  set "arg2=-microarch:native"
 ) else (
   set "arg2="
 )
@@ -18,5 +18,5 @@ REM set "features=-target-features:avx,avx2,avx512f,avx512bw,avx512vl,avx512dq"
 
 
 pushd build
-odin build ..\source\platform_sdl3\ -debug %features% %arg% %arg2% -out:nbtfinder.exe 
+odin build ..\source\platform_sdl3\ -debug %features% %arg% %arg2% -out:nbtfinder.exe
 popd
