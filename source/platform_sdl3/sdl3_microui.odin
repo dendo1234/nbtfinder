@@ -2,16 +2,30 @@ package platform_sdl3
 // NOTE(dendo): not sure how to proprly architecture the UI, shouldn't be skiping handmade lessons
 
 import "../nbtfinder"
+import "../nbtfinder/ui"
 
 import "core:fmt"
 import "vendor:sdl3"
 import mu "vendor:microui"
 
+
+mustate :: struct {
+  ctx : mu.Context,
+  atlas_texture : ^sdl3.Texture,
+}
+
+state : mustate
+
 // NOTE: Copyed and modified from https://github.com/odin-lang/examples/blob/master/sdl3/microui/microui_sdl_demo.odin
-microui_prep :: proc () -> (ok: bool){
-  platstate.mu_atlas_texture = sdl3.CreateTexture(platstate.renderer, .RGBA32, .TARGET, mu.DEFAULT_ATLAS_WIDTH, mu.DEFAULT_ATLAS_HEIGHT)
-  assert(platstate.mu_atlas_texture != nil)
-  if !sdl3.SetTextureBlendMode(platstate.mu_atlas_texture, {.BLEND}) {
+microui_init :: proc () -> (ok: bool) {
+  mu.init(&state.ctx)
+
+  state.ctx.text_width  = mu.default_atlas_text_width
+  state.ctx.text_height = mu.default_atlas_text_height
+
+  state.atlas_texture = sdl3.CreateTexture(platstate.renderer, .RGBA32, .TARGET, mu.DEFAULT_ATLAS_WIDTH, mu.DEFAULT_ATLAS_HEIGHT)
+  assert(state.atlas_texture != nil)
+  if !sdl3.SetTextureBlendMode(state.atlas_texture, {.BLEND}) {
     fmt.eprintln("SDL.SetTextureBlendMode: %s", sdl3.GetError())
     return false
   }
@@ -22,10 +36,12 @@ microui_prep :: proc () -> (ok: bool){
     pixels[i].a   = alpha
   }
 
-  if !sdl3.UpdateTexture(platstate.mu_atlas_texture, nil, raw_data(pixels), 4*mu.DEFAULT_ATLAS_WIDTH) {
+  if !sdl3.UpdateTexture(state.atlas_texture, nil, raw_data(pixels), 4*mu.DEFAULT_ATLAS_WIDTH) {
     fmt.eprintln("SDL.UpdateTexture: %s", sdl3.GetError())
     return false
   }
+
+  delete(pixels)
 
   return true
 }
@@ -36,16 +52,16 @@ microui_process_event :: proc (event: ^sdl3.Event) {
     fn := mu.input_mouse_down if event.button.down else mu.input_mouse_up
     switch event.button.button {
     case 1:
-      fn(platstate.mu_context, i32(event.button.x), i32(event.button.y), .LEFT)
+      fn(&state.ctx, i32(event.button.x), i32(event.button.y), .LEFT)
     case 2:
-      fn(platstate.mu_context, i32(event.button.x), i32(event.button.y), .MIDDLE)
+      fn(&state.ctx, i32(event.button.x), i32(event.button.y), .MIDDLE)
     case 3:
-      fn(platstate.mu_context, i32(event.button.x), i32(event.button.y), .RIGHT)
+      fn(&state.ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
     }
   case .MOUSE_MOTION:
-    mu.input_mouse_move(platstate.mu_context, i32(event.motion.x), i32(event.motion.y))
+    mu.input_mouse_move(&state.ctx, i32(event.motion.x), i32(event.motion.y))
   case .MOUSE_WHEEL:
-    mu.input_scroll(platstate.mu_context, i32(event.wheel.x * 16), i32(event.wheel.y * -16))
+    mu.input_scroll(&state.ctx, i32(event.wheel.x * 16), i32(event.wheel.y * -16))
   }
 }
 
@@ -54,9 +70,9 @@ microui_render_draw_commands :: proc "contextless" (mu_ctx : ^mu.Context) {
 		dst.w = f32(src.w)
 		dst.h = f32(src.h)
 
-		sdl3.SetTextureAlphaMod(platstate.mu_atlas_texture, color.a)
-		sdl3.SetTextureColorMod(platstate.mu_atlas_texture, color.r, color.g, color.b)
-		sdl3.RenderTexture(renderer, platstate.mu_atlas_texture, &sdl3.FRect{f32(src.x), f32(src.y), f32(src.w), f32(src.h)}, dst)
+		sdl3.SetTextureAlphaMod(state.atlas_texture, color.a)
+		sdl3.SetTextureColorMod(state.atlas_texture, color.r, color.g, color.b)
+		sdl3.RenderTexture(renderer, state.atlas_texture, &sdl3.FRect{f32(src.x), f32(src.y), f32(src.w), f32(src.h)}, dst)
 	}
 
 	viewport_rect := &sdl3.Rect{}
@@ -98,7 +114,7 @@ microui_render_draw_commands :: proc "contextless" (mu_ctx : ^mu.Context) {
 }
 
 microui_render :: proc (appstate : ^nbtfinder.AppState) {
-  ctx := platstate.mu_context
+  ctx := &state.ctx
 
   viewport_rect := &sdl3.Rect{}
   sdl3.GetRenderOutputSize(platstate.renderer, &viewport_rect.w, &viewport_rect.h)
@@ -107,7 +123,13 @@ microui_render :: proc (appstate : ^nbtfinder.AppState) {
     w = viewport_rect.w, h = viewport_rect.h
   }
 
-  nbtfinder.microui_draw_commands(appstate, mu_rect)
+  ui.microui_draw_commands(ctx, appstate, mu_rect)
   microui_render_draw_commands(ctx)
 
 }
+
+microui_fini :: proc () {
+  sdl3.DestroyTexture(state.atlas_texture)
+
+}
+

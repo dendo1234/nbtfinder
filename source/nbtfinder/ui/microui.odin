@@ -1,12 +1,12 @@
-package nbtfinder
+package ui
 // NOTE(dendo): not sure how to proprly architecture the UI, shouldn't be skiping handmade lessons
 
 import "core:fmt"
+import "../"
 import mu "vendor:microui"
 
 
-draw_tag :: proc(appstate : ^AppState, tag : NBT_Tag) {
-  ctx := &appstate.mu_context
+draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
 
   switch tag.type {
     case .End:
@@ -55,7 +55,7 @@ draw_tag :: proc(appstate : ^AppState, tag : NBT_Tag) {
           tag := appstate.header.tags[start_index + u32(i)]
 
           mu.push_id_rawptr(ctx, &i, size_of(i))
-          draw_tag(appstate, tag)
+          draw_tag(ctx, appstate, tag)
           mu.pop_id(ctx)
         }
       }
@@ -71,7 +71,7 @@ draw_tag :: proc(appstate : ^AppState, tag : NBT_Tag) {
           tag := appstate.header.tags[start_index + u32(i)]
 
           mu.push_id_rawptr(ctx, &i, size_of(i))
-          draw_tag(appstate, tag)
+          draw_tag(ctx, appstate, tag)
           mu.pop_id(ctx)
         }
       }
@@ -89,18 +89,16 @@ draw_tag :: proc(appstate : ^AppState, tag : NBT_Tag) {
   }
 }
 
-draw_nbt_header :: proc(appstate : ^AppState, header : ^NBT_Decoded_Header) {
+draw_nbt_header :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, header : ^nbtfinder.NBT_Decoded_Header) {
   root_tag := header.tags[header.root_tag_index]
 
-  draw_tag(appstate, root_tag)
+  draw_tag(ctx, appstate, root_tag)
 }
 
-microui_draw_commands :: proc(appstate : ^AppState, rect : mu.Rect) {
-  ctx := &appstate.mu_context
-
+microui_draw_commands :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, rect : mu.Rect) {
   mu.begin(ctx)
   {
-    if mu.begin_window(ctx, window_specs.title, rect, { .NO_CLOSE, .NO_RESIZE }) {
+    if mu.begin_window(ctx, nbtfinder.window_specs.title, rect, { .NO_CLOSE, .NO_RESIZE }) {
       win := mu.get_current_container(ctx);
       win.rect.w = rect.w;
       win.rect.h = rect.h;
@@ -111,7 +109,7 @@ microui_draw_commands :: proc(appstate : ^AppState, rect : mu.Rect) {
       }
       */
 
-      draw_nbt_header(appstate, appstate.header)
+      draw_nbt_header(ctx, appstate, appstate.header)
 
       mu.end_window(ctx)
     }

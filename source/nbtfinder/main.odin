@@ -23,7 +23,6 @@ Compute_Methods :: enum {
 }
 
 AppState :: struct {
-  mu_context: mu.Context,
   compute_method: Compute_Methods,
   header: ^NBT_Decoded_Header
 }
@@ -36,13 +35,7 @@ CPU_Feature :: enum {
 
 CPU_Features :: bit_set[CPU_Feature]
 
-init :: proc(appstate : ^AppState, cpu_features : CPU_Features) -> (mu_context : ^mu.Context, ok : bool) {
-
-  mu.init(&appstate.mu_context)
-
-  mu_context = &appstate.mu_context;
-  mu_context.text_width  = mu.default_atlas_text_width
-  mu_context.text_height = mu.default_atlas_text_height
+init :: proc(appstate : ^AppState, cpu_features : CPU_Features) -> (ok : bool) {
 
   best := run_tests(cpu_features)
 
@@ -56,6 +49,6 @@ init :: proc(appstate : ^AppState, cpu_features : CPU_Features) -> (mu_context :
     case .SIMD_512_bits:
   }
 
-  return mu_context, true
+  return true
 }
 

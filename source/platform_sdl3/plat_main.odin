@@ -8,6 +8,7 @@ import "core:fmt"
 import si "core:sys/info"
 
 import "vendor:sdl3"
+import "vendor:sdl3/ttf"
 import mu "vendor:microui"
 
 import win "core:sys/windows"
@@ -16,11 +17,31 @@ PlatformState :: struct {
   window : ^sdl3.Window,
   renderer : ^sdl3.Renderer,
 
-  mu_atlas_texture : ^sdl3.Texture,
-  mu_context : ^mu.Context
+  text_engine: ^ttf.TextEngine,
 }
 
 platstate : PlatformState = {}
+
+
+// DESC(dendo): ui intefaces
+
+NBTFINDER_UI :: #config(NBTFINDER_UI, "microui")
+
+when NBTFINDER_UI == "microui" {
+  ui_init   : proc() -> (ok: bool)                : microui_init
+  ui_render : proc(appstate: ^nbtfinder.AppState) : microui_render
+  ui_event  : proc(event: ^sdl3.Event)            : microui_process_event
+  ui_fini   : proc()                              : microui_fini
+} else when NBTFINDER_UI == "clay" {
+  ui_init   : proc() -> (ok: bool)                : clay_init
+  ui_render : proc(appstate: ^nbtfinder.AppState) : clay_render
+  ui_event  : proc(event: ^sdl3.Event)            : clay_process_event
+  ui_fini   : proc()                              : clay_fini
+} else {
+message :: "ui '" + NBTFINDER_UI + "' not implemented on platform"
+#panic(message)
+}
+
 
 main :: proc () {
   argv : []cstring = make([]cstring, len(os.args))
@@ -73,7 +94,18 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
       return sdl3.AppResult.FAILURE
     }
 
-    if (microui_prep() == false) {
+    if ttf.Init() != true {
+      fmt.eprintfln("Failed to init TTF, SDL_ERROR: %v", sdl3.GetError())
+      return sdl3.AppResult.FAILURE
+    }
+
+    platstate.text_engine = ttf.CreateRendererTextEngine(platstate.renderer)
+    if platstate.text_engine == nil {
+      fmt.eprintfln("Failed to create TTF_TextEngine, SDL_ERROR: %v", sdl3.GetError())
+      return sdl3.AppResult.FAILURE
+    }
+
+    if (ui_init() == false) {
       return sdl3.AppResult.FAILURE
     }
   }
@@ -104,11 +136,10 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
     }
     appstate^ = memory;
 
-    mu_context, ok := nbtfinder.init(memory, cpu_features);
+    ok := nbtfinder.init(memory, cpu_features);
     if (!ok) {
       return sdl3.AppResult.FAILURE
     }
-    platstate.mu_context = mu_context
 
     nbtfinder.Mca_read(memory, "r.0.0.mca")
   }
@@ -123,7 +154,7 @@ AppIterate :: proc "c" (appstate: rawptr) -> sdl3.AppResult {
   context = runtime.default_context()
 
   {
-    microui_render(cast(^nbtfinder.AppState)appstate)
+    ui_render(cast(^nbtfinder.AppState)appstate)
   }
 
   free_all(context.temp_allocator)
