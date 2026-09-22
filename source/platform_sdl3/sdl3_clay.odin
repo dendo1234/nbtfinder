@@ -7,6 +7,7 @@ import "core:strings"
 import "base:runtime"
 import "vendor:sdl3"
 import "vendor:sdl3/ttf"
+import "vendor:sdl3/image"
 import clay "clay:clay-odin"
 
 import "../nbtfinder"
@@ -53,39 +54,49 @@ clay_init :: proc() -> (ok: bool) {
     // clay.TextElementConfig contains members such as fontId, fontSize, letterSpacing, etc..
     // Note: clay.String->chars is not guaranteed to be null terminated
 
-
     // TODO: this is not considering
     // letterSpacing: u16,
-    // lineHeight:    u16,
     // wrapMode:      TextWrapMode,
     // textAlignment: TextAlignment,
 
-    // TODO: do this properly
-    /*
-    ttf.SetFontSize(claystate.fonts[config.fontId], f32(config.fontSize))
-    width: i32
-    ttf.MeasureString(claystate.fonts[config.fontId], cstring(text.chars), uint(text.length), 0, &width,nil)
-    */
-    
+    font := claystate.fonts[config.fontId]
+    ttf.SetFontSize(font, f32(config.fontSize))
+
+    // ttf.SetLineSkip(font, i32(config.lineHeight))
+    // ttf.SetFontWrapAlignment(font, )
+
+    width, height: i32
+    ttf.GetStringSize(font, cstring(text.chars), uint(text.length), &width, &height);
 
     return {
-      width = f32(text.length * i32(config.fontSize)),
-      height = f32(config.fontSize),
+      width = f32(width),
+      height = f32(height)
     }
   }
 
   // Tell clay how to measure text
   clay.SetMeasureTextFunction(measure_text, nil)
 
+  // DESC: Load images
   claystate.image = sdl3.CreateTexture(platstate.renderer, .RGBA8888, .STATIC, 400, 300)
   if claystate.image == nil {
     fmt.eprintfln("Failed to create SDL_Texture: %v", sdl3.GetError())
     return false
   }
 
-  DejaVuSans :: #load("../../data/DejaVuSans.ttf")
+  COMPOUND_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_compound.png")
 
-  dejavu_stream := sdl3.IOFromMem(raw_data(DejaVuSans), len(DejaVuSans))
+  compound_stream := sdl3.IOFromMem(raw_data(COMPOUND_TAG_BYTES), len(COMPOUND_TAG_BYTES))
+  assert(compound_stream != nil)
+  claystate.image = image.LoadTextureTyped_IO(platstate.renderer, compound_stream, true, "PNG")
+  assert(claystate.image != nil)
+
+  // NOTE(dendo): I found it pretty weird that the executable size grew way more than the 977 KiB of the dejavu file.
+  // As it turns out, this fenomenom only happens in debug builds. So it isn't that intersing.
+  // It's probraly the sdl3.IOFromMem call that is causing it
+  DEJA_VU_SANS_BYTES :: #load("../../data/DejaVuSans.ttf")
+
+  dejavu_stream := sdl3.IOFromMem(raw_data(DEJA_VU_SANS_BYTES), len(DEJA_VU_SANS_BYTES))
   assert(dejavu_stream != nil)
   claystate.fonts[0] = ttf.OpenFontIO(dejavu_stream, true, 12)
   if (claystate.fonts[0] == nil) {
@@ -427,7 +438,6 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) {
         font := claystate.fonts[config.fontId]
         ttf.SetFontSize(font, f32(config.fontSize))
 
-        // TODO: is config.stringContents.chars always null terminated?
         text := ttf.CreateText(platstate.text_engine, font, cstring(config.stringContents.chars), uint(config.stringContents.length))
         assert(text != nil)
 
