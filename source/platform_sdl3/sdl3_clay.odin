@@ -17,17 +17,19 @@ import "../nbtfinder/ui"
 ui_fini   :: proc()
 */
 
-Clay_State :: struct {
+SDL3_Clay_State :: struct {
   is_left_mouse_down: bool,
   mouse_x: f32,
   mouse_y: f32,
 
   image: ^sdl3.Texture,
 
-  fonts: [4]^ttf.Font
+  fonts: [4]^ttf.Font,
+
+  claystate: ui.Clay_State,
 }
 
-claystate : Clay_State
+sdl3_clay_state : SDL3_Clay_State
 
 // NOTE: copied and modified from https://github.com/nicbarker/clay/blob/main/bindings/odin/README.md
 
@@ -43,7 +45,7 @@ clay_init :: proc() -> (ok: bool) {
   min_memory_size := clay.MinMemorySize()
   memory := make([^]u8, min_memory_size)
   arena: clay.Arena = clay.CreateArenaWithCapacityAndMemory(uint(min_memory_size), memory)
-  clay.Initialize(arena, {1080, 720}, { handler = error_handler })
+  clay.Initialize(arena, { f32(nbtfinder.window_specs.width), f32(nbtfinder.window_specs.height) }, { handler = error_handler })
 
   // Example measure text function
   measure_text :: proc "c" (
@@ -59,7 +61,7 @@ clay_init :: proc() -> (ok: bool) {
     // wrapMode:      TextWrapMode,
     // textAlignment: TextAlignment,
 
-    font := claystate.fonts[config.fontId]
+    font := sdl3_clay_state.fonts[config.fontId]
     ttf.SetFontSize(font, f32(config.fontSize))
 
     // ttf.SetLineSkip(font, i32(config.lineHeight))
@@ -78,18 +80,44 @@ clay_init :: proc() -> (ok: bool) {
   clay.SetMeasureTextFunction(measure_text, nil)
 
   // DESC: Load images
-  claystate.image = sdl3.CreateTexture(platstate.renderer, .RGBA8888, .STATIC, 400, 300)
-  if claystate.image == nil {
-    fmt.eprintfln("Failed to create SDL_Texture: %v", sdl3.GetError())
-    return false
+
+  BYTE_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_byte.png")
+  SHORT_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_short.png")
+  INT_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_int.png")
+  LONG_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_long.png")
+  FLOAT_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_float.png")
+  DOUBLE_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_double.png")
+  BYTE_ARRAY_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_byte-array.png")
+  STRING_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_string.png")
+  LIST_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_list.png")
+  COMPOUND_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_compound.png")
+  INT_ARRAY_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_int-array.png")
+  LONG_ARRAY_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_long-array.png")
+
+  ICONS : [13][]u8 : {
+    BYTE_TAG_BYTES,
+    BYTE_TAG_BYTES,
+    SHORT_TAG_BYTES,
+    INT_TAG_BYTES,
+    LONG_TAG_BYTES,
+    FLOAT_TAG_BYTES,
+    DOUBLE_TAG_BYTES,
+    BYTE_ARRAY_TAG_BYTES,
+    STRING_TAG_BYTES,
+    LIST_TAG_BYTES,
+    COMPOUND_TAG_BYTES,
+    INT_ARRAY_TAG_BYTES,
+    LONG_ARRAY_TAG_BYTES
   }
 
-  COMPOUND_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_compound.png")
+  for bytes, index in ICONS {
+    stream := sdl3.IOFromMem(raw_data(bytes), len(bytes))
+    assert(stream != nil)
 
-  compound_stream := sdl3.IOFromMem(raw_data(COMPOUND_TAG_BYTES), len(COMPOUND_TAG_BYTES))
-  assert(compound_stream != nil)
-  claystate.image = image.LoadTextureTyped_IO(platstate.renderer, compound_stream, true, "PNG")
-  assert(claystate.image != nil)
+    sdl3_clay_state.claystate.images.tag_icons.raw[index] = image.LoadTextureTyped_IO(platstate.renderer, stream, true, "PNG")
+    assert(sdl3_clay_state.claystate.images.tag_icons.raw[index] != nil)
+  }
+
 
   // NOTE(dendo): I found it pretty weird that the executable size grew way more than the 977 KiB of the dejavu file.
   // As it turns out, this fenomenom only happens in debug builds. So it isn't that intersing.
@@ -98,8 +126,8 @@ clay_init :: proc() -> (ok: bool) {
 
   dejavu_stream := sdl3.IOFromMem(raw_data(DEJA_VU_SANS_BYTES), len(DEJA_VU_SANS_BYTES))
   assert(dejavu_stream != nil)
-  claystate.fonts[0] = ttf.OpenFontIO(dejavu_stream, true, 12)
-  if (claystate.fonts[0] == nil) {
+  sdl3_clay_state.fonts[0] = ttf.OpenFontIO(dejavu_stream, true, 12)
+  if (sdl3_clay_state.fonts[0] == nil) {
     fmt.eprintfln("Failed to create Font: %v", sdl3.GetError())
     return false
   }
@@ -117,25 +145,29 @@ clay_process_event :: proc(event: ^sdl3.Event) {
     switch event.button.button {
     case 1:
       // left
-      claystate.is_left_mouse_down = event.button.down
+      sdl3_clay_state.is_left_mouse_down = event.button.down
     case 2:
       // middle
     case 3:
       // right
     }
   case .MOUSE_MOTION:
-    claystate.mouse_x = event.motion.x
-    claystate.mouse_y = event.motion.y
+    sdl3_clay_state.mouse_x = event.motion.x
+    sdl3_clay_state.mouse_y = event.motion.y
   case .MOUSE_WHEEL:
     x := event.wheel.x * 16
-    y := event.wheel.y * -16
+    y := event.wheel.y * 16
     // TODO(dendo): delta time shouldn't be zero
     clay.UpdateScrollContainers(true, {x, y}, 0)
+  case .WINDOW_RESIZED:
+    w := event.window.data1
+    h := event.window.data2
+    clay.SetLayoutDimensions({width = f32(w), height = f32(h)})
   }
 
   clay.SetPointerState(
-      { claystate.mouse_x, claystate.mouse_y },
-      claystate.is_left_mouse_down,
+      { sdl3_clay_state.mouse_x, sdl3_clay_state.mouse_y },
+      sdl3_clay_state.is_left_mouse_down,
   )
 }
 
@@ -345,10 +377,7 @@ clay_render_arc :: proc (center: sdl3.FPoint, radius, start_angle, end_angle, th
 clay_render :: proc(appstate: ^nbtfinder.AppState) {
   renderer := platstate.renderer
 
-  images: ui.Clay_Images = {
-    profile = claystate.image
-  }
-  render_commands := ui.clay_draw_commands(appstate, images)
+  render_commands := ui.clay_draw_commands(appstate, &sdl3_clay_state.claystate)
 
   for i in 0..<i32(render_commands.length) {
       rcmd := clay.RenderCommandArray_Get(&render_commands, i)
@@ -435,7 +464,7 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) {
       case .Text:
         config := &rcmd.renderData.text
 
-        font := claystate.fonts[config.fontId]
+        font := sdl3_clay_state.fonts[config.fontId]
         ttf.SetFontSize(font, f32(config.fontSize))
 
         text := ttf.CreateText(platstate.text_engine, font, cstring(config.stringContents.chars), uint(config.stringContents.length))
@@ -469,10 +498,10 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) {
 }
 
 clay_fini :: proc() {
-  sdl3.DestroyTexture(claystate.image)
+  sdl3.DestroyTexture(sdl3_clay_state.image)
 
   for i := 0; i < 4; i += 1 {
-    ttf.CloseFont(claystate.fonts[i])
+    ttf.CloseFont(sdl3_clay_state.fonts[i])
   }
 }
 

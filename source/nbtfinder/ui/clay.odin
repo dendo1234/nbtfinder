@@ -1,100 +1,10 @@
 package ui
 // NOTE(dendo): not sure how to proprly architecture the UI, shouldn't be skiping handmade lessons
 
+import "base:runtime"
 import "../"
 import "core:fmt"
 import clay "clay:clay-odin"
-
-
-/*
-draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
-  switch tag.type {
-    case .End:
-      assert(false)
-
-    case .Byte:
-      s := fmt.tprintf("%v: i8 = %v", tag.name, tag.value.byte)
-      mu.label(ctx, s)
-
-    case .Short:
-      s := fmt.tprintf("%v: i16 = %v", tag.name, tag.value.short)
-      mu.label(ctx, s)
-
-    case .Int:
-      s := fmt.tprintf("%v: i32 = %v", tag.name, tag.value.integer)
-      mu.label(ctx, s)
-
-    case .Long:
-      s := fmt.tprintf("%v: i64 = %v", tag.name, tag.value.long)
-      mu.label(ctx, s)
-
-    case .Float:
-      s := fmt.tprintf("%v: f32 = %v", tag.name, tag.value.float)
-      mu.label(ctx, s)
-
-    case .Double:
-      s := fmt.tprintf("%v: f64 = %v", tag.name, tag.value.double)
-      mu.label(ctx, s)
-
-    case .ByteArray:
-      s := fmt.tprintf("%v: [%v]i8", tag.name, tag.value.byte_array.count)
-      mu.label(ctx, s)
-
-    case .String:
-      s := fmt.tprintf("%v: string = \"%v\"", tag.name, tag.value.str)
-      mu.label(ctx, s)
-
-    case .List:
-      start_index := tag.value.list.start_index
-      count := tag.value.list.count
-
-      assert(count >= 0)
-      s := fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " items", sep = "")
-      if .ACTIVE in mu.treenode(ctx, s) {
-        for i : i32 = 0; i < count; i += 1 {
-          tag := appstate.header.tags[start_index + u32(i)]
-
-          mu.push_id_rawptr(ctx, &i, size_of(i))
-          draw_tag(ctx, appstate, tag)
-          mu.pop_id(ctx)
-        }
-      }
-
-    case .Compound:
-      start_index := tag.value.compound.start_index
-      count := tag.value.compound.count
-
-      assert(count >= 0)
-      s := fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " tags", sep = "")
-      if .ACTIVE in mu.treenode(ctx, s, opt = { } ) {
-        for i : i32 = 0; i < count; i += 1 {
-          tag := appstate.header.tags[start_index + u32(i)]
-
-          mu.push_id_rawptr(ctx, &i, size_of(i))
-          draw_tag(ctx, appstate, tag)
-          mu.pop_id(ctx)
-        }
-      }
-
-    case .IntArray:
-      s := fmt.tprintf("%v: [%v]i32", tag.name, tag.value.int_array.count)
-      mu.label(ctx, s)
-
-    case .LongArray:
-      s := fmt.tprintf("%v: [%v]i32", tag.name, tag.value.long_array.count)
-      mu.label(ctx, s)
-
-    case:
-      assert(false)
-  }
-}
-
-draw_nbt_header :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, header : ^nbtfinder.NBT_Decoded_Header) {
-  root_tag := header.tags[header.root_tag_index]
-
-  draw_tag(ctx, appstate, root_tag)
-}
-*/
 
 // Define some colors.
 COLOR_LIGHT :: clay.Color{224, 215, 210, 255}
@@ -102,38 +12,272 @@ COLOR_RED :: clay.Color{168, 66, 28, 255}
 COLOR_ORANGE :: clay.Color{225, 138, 50, 255}
 COLOR_BLACK :: clay.Color{0, 0, 0, 255}
 
-Clay_Images :: struct {
-  profile: rawptr
+Pool_Item :: struct {
+  id : u32,
+  last_updated : i32
 }
 
+TREENODE_IDENT :: 16
 
-clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, images: Clay_Images) -> clay.ClayArray(clay.RenderCommand) {
-  // Layout config is just a struct that can be declared statically, or inline
+Clay_State :: struct {
+  images: struct {
+    tag_icons: struct #raw_union {
+      names: struct {
+        end: rawptr,
+        byte: rawptr,
+        short: rawptr,
+        int: rawptr,
+        long: rawptr,
+        float: rawptr,
+        double: rawptr,
+        byte_array: rawptr,
+        string: rawptr,
+        list: rawptr,
+        compound: rawptr,
+        int_array: rawptr,
+        long_array: rawptr
+      },
+      raw: [13]rawptr
+    },
+    profile: rawptr
+  },
+  treepool: [48]Pool_Item,
+  current_frame: i32,
+  //current_ident: u16,
+}
 
+claystate : ^Clay_State
 
-  // Re-useable components are just normal procs.
-  sidebar_item_component :: proc(index: u32) {
-    sidebar_item_layout := clay.LayoutConfig {
-        sizing = {
-            width = clay.SizingGrow({}),
-            height = clay.SizingFixed(50)
-        },
+pool_add :: proc "contextless" (pool: []Pool_Item, id: u32, current_frame: i32) -> (idx: i32) {
+  context = runtime.default_context()
+
+  free_index := -1
+  frame := current_frame
+  for i := 0; i < len(pool); i += 1 {
+    if pool[i].last_updated < frame {
+      // is available
+      free_index = i
+      frame = pool[i].last_updated
     }
-    
-    if clay.UI(clay.ID("SidebarBlob", index))({
-        layout = sidebar_item_layout,
-        backgroundColor = COLOR_ORANGE
-    }) {
-      clay.Text(
-          "teste gene",
-          { textColor = COLOR_BLACK, fontSize = 16 },
-      )
+  }
+  // TODO(dendo): remove this assert
+  assert(free_index != -1)
+
+  pool[free_index].id = id
+  pool[free_index].last_updated = current_frame
+
+  return i32(free_index)
+}
+
+pool_update :: proc(pool: []Pool_Item, idx: i32, current_frame: i32) {
+  pool[idx].last_updated = current_frame
+}
+
+pool_get :: proc "contextless" (pool: []Pool_Item, id: u32) -> (idx: i32) {
+  for i := 0; i < len(pool); i += 1 {
+    if pool[i].id == id {
+      return i32(i)
+    }
+  }
+  return -1
+}
+
+SizingFit :: proc "contextless" (sizeMinMax: clay.SizingConstraintsMinMax = {}) -> clay.SizingAxis {
+    return clay.SizingAxis{type = clay.SizingType.Fit, constraints = {sizeMinMax = sizeMinMax}}
+}
+
+SizingGrow :: proc "contextless" (sizeMinMax: clay.SizingConstraintsMinMax = {}) -> clay.SizingAxis {
+    return clay.SizingAxis{type = clay.SizingType.Grow, constraints = {sizeMinMax = sizeMinMax}}
+}
+
+SizingFixed :: proc "contextless" (size: f32) -> clay.SizingAxis {
+    return clay.SizingAxis{type = clay.SizingType.Fixed, constraints = {sizeMinMax = {size, size}}}
+}
+
+SizingPercent :: proc "contextless" (sizePercent: f32) -> clay.SizingAxis {
+    return clay.SizingAxis{type = clay.SizingType.Percent, constraints = {sizePercent = sizePercent}}
+}
+
+icon_config: clay.ElementDeclaration = {
+  layout = {
+    sizing = { width = SizingFixed(16), height = SizingFixed(16)},
+  }
+}
+
+clay_draw_tag :: proc(appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
+  // TODO(dendo): delete the strings
+
+  clay_listlike_config: clay.ElementDeclaration : {
+    layout = {
+      layoutDirection = .TopToBottom
     }
   }
 
+  default_text: clay.TextElementConfig : {
+    fontSize = 16,
+    textColor = COLOR_BLACK
+  }
+
+  tree_hover :: proc "c" (id: clay.ElementId, pointerData: clay.PointerData, userData: rawptr) {
+    id := u32(uintptr(userData))
+
+    idx := pool_get(claystate.treepool[:], id)
+    active := idx >= 0
+    if pointerData.state == .PressedThisFrame {
+      if idx == -1 {
+        idx = pool_add(claystate.treepool[:], id, claystate.current_frame)
+      } else {
+        claystate.treepool[idx].id = 0
+        claystate.treepool[idx].last_updated = 0
+
+      }
+
+    }
+  }
+
+  tag_config: clay.ElementDeclaration : {
+    layout = {
+      layoutDirection = .LeftToRight
+    }
+  }
+
+
+  dropdown :: proc (appstate: ^nbtfinder.AppState, text: string, image: rawptr, start_index: u32, count: i32) {
+    assert(count >= 0)
+
+    id: u32
+
+    // DESC: HEADER
+    if clay.UI()(tag_config) {
+      config := icon_config
+      config.image.imageData = image
+      if clay.UI()(config) {}
+      clay.Text(text, default_text)
+
+      id = clay.GetOpenElementId()
+      clay.OnHover(tree_hover, rawptr(uintptr(id)))
+    }
+
+    // NOTE: one frame delay on the update of the mouse click
+
+    idx := pool_get(claystate.treepool[:], id)
+    active := idx >= 0
+
+    if (active) {
+      pool_update(claystate.treepool[:], idx, claystate.current_frame)
+
+      config := clay_listlike_config
+      config.layout.padding.left = TREENODE_IDENT
+      // DESC: CHILDREN
+      if clay.UI()(config) {
+        for i : i32 = 0; i < count; i += 1 {
+          tag := appstate.header.tags[start_index + u32(i)]
+
+          // TODO: add id
+          clay_draw_tag(appstate, tag)
+        }
+      }
+
+    }
+  }
+
+  if clay.UI()(clay_listlike_config) {
+    start_index : u32
+    count : i32
+    text: string
+    image: rawptr
+
+    switch tag.type {
+      case .End:
+        assert(false)
+
+      case .Byte:
+        text = fmt.tprintf("%v: i8 = %v", tag.name, tag.value.byte)
+        image = claystate.images.tag_icons.names.byte
+
+      case .Short:
+        text = fmt.tprintf("%v: i16 = %v", tag.name, tag.value.short)
+        image = claystate.images.tag_icons.names.short
+
+      case .Int:
+        text = fmt.tprintf("%v: i32 = %v", tag.name, tag.value.integer)
+        image = claystate.images.tag_icons.names.int
+
+      case .Long:
+        text = fmt.tprintf("%v: i64 = %v", tag.name, tag.value.long)
+        image = claystate.images.tag_icons.names.long
+
+      case .Float:
+        text = fmt.tprintf("%v: f32 = %v", tag.name, tag.value.float)
+        image = claystate.images.tag_icons.names.float
+
+      case .Double:
+        text = fmt.tprintf("%v: f64 = %v", tag.name, tag.value.double)
+        image = claystate.images.tag_icons.names.double
+
+      case .ByteArray:
+        text = fmt.tprintf("%v: [%v]i8", tag.name, tag.value.byte_array.count)
+        image = claystate.images.tag_icons.names.byte_array
+
+      case .String:
+        text = fmt.tprintf("%v: string = \"%v\"", tag.name, tag.value.str)
+        image = claystate.images.tag_icons.names.string
+
+      case .List:
+        start_index = tag.value.list.start_index
+        count = tag.value.list.count
+
+        text = fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " items", sep = "")
+        image = claystate.images.tag_icons.names.list
+
+      case .Compound:
+        start_index = tag.value.compound.start_index
+        count = tag.value.compound.count
+
+        text = fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " tags", sep = "")
+        image = claystate.images.tag_icons.names.compound
+
+      case .IntArray:
+        text = fmt.tprintf("%v: [%v]i32", tag.name, tag.value.int_array.count)
+        image = claystate.images.tag_icons.names.int_array
+
+      case .LongArray:
+        text = fmt.tprintf("%v: [%v]i32", tag.name, tag.value.long_array.count)
+        image = claystate.images.tag_icons.names.long_array
+
+      case:
+        assert(false)
+    }
+
+    if tag.type == .Compound || tag.type == .List {
+      dropdown(appstate, text, image, start_index, count)
+    } else {
+
+      if clay.UI()(tag_config) {
+        config := icon_config
+        config.image.imageData = image
+        if clay.UI()(config) {}
+        clay.Text(text, default_text)
+      }
+
+    }
+  }
+}
+
+clay_draw_nbt_header :: proc(appstate : ^nbtfinder.AppState, header : ^nbtfinder.NBT_Decoded_Header) {
+  root_tag := header.tags[header.root_tag_index]
+
+  clay_draw_tag(appstate, root_tag)
+}
+
+clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_State) -> clay.ClayArray(clay.RenderCommand) {
+  claystate = claystateptr
+
+  claystate.current_frame += 1
+
+  //clay.SetDebugModeEnabled(true)
+
   clay.BeginLayout()
-    // An example of laying out a UI with a fixed-width sidebar and flexible-width main content
-    // NOTE: To create a scope for child components, the Odin API uses `if` with components that have children
     if clay.UI(clay.ID("OuterContainer"))({
         layout = {
             sizing = { width = clay.SizingGrow({}), height = clay.SizingGrow({}) },
@@ -142,55 +286,24 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, images: Clay_Images) -
         },
         backgroundColor = { 250, 250, 255, 255 },
     }) {
-        if clay.UI(clay.ID("SideBar"))({
-            layout = {
-                layoutDirection = .TopToBottom,
-                sizing = { width = clay.SizingFixed(300), height = clay.SizingGrow({}) },
-                padding = { 16, 16, 16, 16 },
-                childGap = 16,
-            },
-            backgroundColor = COLOR_LIGHT,
-        }) {
-            if clay.UI(clay.ID("ProfilePictureOuter"))({
-                layout = {
-                    sizing = { width = clay.SizingGrow({}) },
-                    padding = { 16, 16, 16, 16 },
-                    childGap = 16,
-                    childAlignment = { y = .Center },
-                },
-                backgroundColor = COLOR_RED,
-                cornerRadius = { 6, 6, 6, 6 },
-            }) {
-                if clay.UI(clay.ID("ProfilePicture"))({
-                    layout = {
-                        sizing = { width = clay.SizingFixed(60), height = clay.SizingFixed(60) },
-                    },
-                    image = {
-                        // How you define `profile_picture` depends on your renderer.
-                        imageData = images.profile,
-                    },
-                }) {}
-
-                clay.Text(
-                    "Clay - UI Library",
-                    { textColor = COLOR_BLACK, fontSize = 16 },
-                )
-            }
-
-            // Standard Odin code like loops, etc. work inside components.
-            // Here we render 5 sidebar items.
-            for i in u32(0)..<5 {
-                sidebar_item_component(i)
-            }
+      if clay.UI(clay.ID("MainContent"))({
+        layout = {
+            sizing = { width = clay.SizingGrow({}), height = clay.SizingGrow({}) },
+            padding = { 16, 16, 16, 16 },
+            childGap = 16,
+        },
+        clip = {
+          vertical = true,
+          childOffset = clay.GetScrollOffset()
         }
+      }) {
+        clay_draw_nbt_header(appstate, appstate.header)
 
-        if clay.UI(clay.ID("MainContent"))({
-            layout = {
-                sizing = { width = clay.SizingGrow({}), height = clay.SizingGrow({}) },
-            },
-            backgroundColor = COLOR_LIGHT,
-        }) {}
+      }
     }
+
+
+
   // TODO: fix deltatime
   return clay.EndLayout(0)
 }

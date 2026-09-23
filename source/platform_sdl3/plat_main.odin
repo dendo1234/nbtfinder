@@ -171,7 +171,7 @@ AppQuit :: proc "c" (appstate: rawptr, result: sdl3.AppResult) {
 AppEvent :: proc "c" (appstate: rawptr, event: ^sdl3.Event) -> sdl3.AppResult {
   context = runtime.default_context()
 
-  microui_process_event(event)
+  ui_event(event)
   #partial switch event.type {
   case .QUIT:
     return sdl3.AppResult.SUCCESS
