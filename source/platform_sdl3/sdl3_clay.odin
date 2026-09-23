@@ -21,10 +21,12 @@ SDL3_Clay_State :: struct {
   is_left_mouse_down: bool,
   mouse_x: f32,
   mouse_y: f32,
-
-  image: ^sdl3.Texture,
+  wheel_x: f32,
+  wheel_y: f32,
 
   fonts: [4]^ttf.Font,
+
+  last_update_time: u64,
 
   claystate: ui.Clay_State,
 }
@@ -95,7 +97,7 @@ clay_init :: proc() -> (ok: bool) {
   LONG_ARRAY_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_long-array.png")
 
   ICONS : [13][]u8 : {
-    BYTE_TAG_BYTES,
+    BYTE_TAG_BYTES, // TODO: this is a place holder
     BYTE_TAG_BYTES,
     SHORT_TAG_BYTES,
     INT_TAG_BYTES,
@@ -114,8 +116,8 @@ clay_init :: proc() -> (ok: bool) {
     stream := sdl3.IOFromMem(raw_data(bytes), len(bytes))
     assert(stream != nil)
 
-    sdl3_clay_state.claystate.images.tag_icons.raw[index] = image.LoadTextureTyped_IO(platstate.renderer, stream, true, "PNG")
-    assert(sdl3_clay_state.claystate.images.tag_icons.raw[index] != nil)
+    sdl3_clay_state.claystate.images.raw[index] = image.LoadTextureTyped_IO(platstate.renderer, stream, true, "PNG")
+    assert(sdl3_clay_state.claystate.images.raw[index] != nil)
   }
 
 
@@ -133,13 +135,12 @@ clay_init :: proc() -> (ok: bool) {
   }
 
 
+  sdl3_clay_state.last_update_time = sdl3.GetTicksNS()
+
   return true
 }
 
 clay_process_event :: proc(event: ^sdl3.Event) {
-  // NOTE(dendo): clay's Clay_SetPointerState expects to be updated only once per frame
-  // Is it okay to call it here?
-
   #partial switch event.type {
   case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:
     switch event.button.button {
@@ -155,20 +156,14 @@ clay_process_event :: proc(event: ^sdl3.Event) {
     sdl3_clay_state.mouse_x = event.motion.x
     sdl3_clay_state.mouse_y = event.motion.y
   case .MOUSE_WHEEL:
-    x := event.wheel.x * 16
-    y := event.wheel.y * 16
-    // TODO(dendo): delta time shouldn't be zero
-    clay.UpdateScrollContainers(true, {x, y}, 0)
+    sdl3_clay_state.wheel_x = event.wheel.x
+    sdl3_clay_state.wheel_y = event.wheel.y
   case .WINDOW_RESIZED:
     w := event.window.data1
     h := event.window.data2
     clay.SetLayoutDimensions({width = f32(w), height = f32(h)})
   }
 
-  clay.SetPointerState(
-      { sdl3_clay_state.mouse_x, sdl3_clay_state.mouse_y },
-      sdl3_clay_state.is_left_mouse_down,
-  )
 }
 
 // NOTE: copied and modified from https://github.com/nicbarker/clay/blob/main/renderers/SDL3/clay_renderer_SDL3.c
@@ -374,13 +369,9 @@ clay_render_arc :: proc (center: sdl3.FPoint, radius, start_angle, end_angle, th
   }
 }
 
-clay_render :: proc(appstate: ^nbtfinder.AppState) {
-  renderer := platstate.renderer
-
-  render_commands := ui.clay_draw_commands(appstate, &sdl3_clay_state.claystate)
-
+clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^clay.ClayArray(clay.RenderCommand)) {
   for i in 0..<i32(render_commands.length) {
-      rcmd := clay.RenderCommandArray_Get(&render_commands, i)
+      rcmd := clay.RenderCommandArray_Get(render_commands, i)
       bounding_box : clay.BoundingBox = rcmd.boundingBox
       rect : sdl3.FRect = { bounding_box.x, bounding_box.y, bounding_box.width, bounding_box.height }
 
@@ -493,12 +484,33 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) {
         assert(false, "Clay render command not implemented")
       }
   }
+}
 
+clay_render :: proc(appstate: ^nbtfinder.AppState) {
+  renderer := platstate.renderer
+
+  temp_time := sdl3.GetTicksNS()
+  delta_time := temp_time - sdl3_clay_state.last_update_time
+  sdl3_clay_state.last_update_time = temp_time
+  fdelta: f32 = f32(delta_time*1e9)
+
+  clay.SetPointerState(
+      { sdl3_clay_state.mouse_x, sdl3_clay_state.mouse_y },
+      sdl3_clay_state.is_left_mouse_down,
+  )
+  clay.UpdateScrollContainers(true, {sdl3_clay_state.wheel_x, sdl3_clay_state.wheel_y}, fdelta)
+
+  render_commands := ui.clay_draw_commands(appstate, &sdl3_clay_state.claystate, fdelta)
+
+  clay_render_draw_commands(platstate.renderer, &render_commands)
 	sdl3.RenderPresent(platstate.renderer)
 }
 
 clay_fini :: proc() {
-  sdl3.DestroyTexture(sdl3_clay_state.image)
+
+  for i := 0; i < len(sdl3_clay_state.claystate.images.raw); i += 1 {
+    sdl3.DestroyTexture((^sdl3.Texture)(sdl3_clay_state.claystate.images.raw[i]))
+  }
 
   for i := 0; i < 4; i += 1 {
     ttf.CloseFont(sdl3_clay_state.fonts[i])
