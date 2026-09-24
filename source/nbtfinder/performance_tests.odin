@@ -1,7 +1,9 @@
 package nbtfinder
 
+import uprof "../amduprof"
 import "base:intrinsics"
 import "base:runtime"
+import b "core:bytes"
 import "core:encoding/endian"
 import "core:fmt"
 import "core:math"
@@ -9,8 +11,9 @@ import "core:mem"
 import "core:slice"
 import "core:simd"
 import "core:time"
+import "core:compress/gzip"
 
-TEST_REPEAT_COUNT :: 4
+TEST_REPEAT_COUNT :: 1
 STRIDE_COUNT :: 16
 
 // NOTE: seting this atribute made the loop go faster, probraly due to code alignment
@@ -201,7 +204,9 @@ run_test :: proc(
     }
     statistics = statistics_from_durations(durations[:])
     relative_std_deviation : f64 = f64(statistics.std_deviation)/f64(statistics.avg)
-    //fmt.printfln("%40v - result: %v, %v, %v", name, result, statistics, relative_std_deviation)
+
+    mib_per_sec := f64(len(bytes))*1e3/f64(statistics.avg)
+    fmt.printfln("%40v - result: %v, %v, %v, %v MiB/s", name, result, statistics, relative_std_deviation, mib_per_sec)
 
     if !should_retry(statistics) {
       break
@@ -212,7 +217,7 @@ run_test :: proc(
 }
 
 run_tests :: proc(cpu_features: CPU_Features) -> (best: Compute_Methods) {
-  MiB :: 10 << 20
+  MiB :: 1 << 20
   bytes, err := mem.alloc_bytes_non_zeroed(MiB, alignment = mem.DEFAULT_ALIGNMENT)
   durations, err2 := make([dynamic]time.Duration, 0, 16)
 
@@ -257,8 +262,28 @@ run_tests :: proc(cpu_features: CPU_Features) -> (best: Compute_Methods) {
     best_avg = statistics[3].avg
   }
 
+
   delete(bytes)
   delete(durations)
+
+  nbt_decode_set_procedures(best, true)
+  {
+    buf: b.Buffer
+    err := gzip.load_from_file("level.dat", &buf, -1, context.temp_allocator)
+    assert(err == nil)
+
+    uprof.ProfileResume()
+    header, timing := nbt_decode(buf.buf[:])
+    uprof.ProfilePause()
+    fmt.println(timing)
+
+    free(header)
+  }
+
+
+
+
+
 
   return best
 

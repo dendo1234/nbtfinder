@@ -74,7 +74,7 @@ Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_l
   fmt.println("Scalar")
   nbt_decode_set_procedures(.Scalar, true)
 
-  for i := 0; i < 10; i += 1 {
+  for i := 0; i < 5; i += 1 {
     timing : Timing_Info
     appstate.header, timing = nbt_decode(nbt_bytes)
 
@@ -83,7 +83,7 @@ Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_l
 
   fmt.println(appstate.compute_method)
   nbt_decode_set_procedures(appstate.compute_method, true)
-  for i := 0; i < 10; i += 1 {
+  for i := 0; i < 5; i += 1 {
     timing : Timing_Info
     appstate.header, timing = nbt_decode(nbt_bytes)
 
