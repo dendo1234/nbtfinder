@@ -565,6 +565,19 @@ Timing_Info :: struct {
 nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: Timing_Info) {
   tick := time.tick_now()
 
+  // DESC: pessimizing max size for memory
+  // NOTE: worst case -> list : [1 << 31]bytes = { ... }
+  // for each elemment:
+  // NBT file uses 1 byte
+  // NBT decoder is using 16 bytes
+  // this is very rare though
+
+  // NOTE: test moded level.dat has around 1 tag every 15,5 to be decoded bytes
+  // 1 tag every 8 bytes is a high estimate
+
+  tags_amount_guess := len(nbt_bytes)/8
+
+
   decoder : NBT_Decoder = {
     is_big_endian_file = true,
     raw_data = nbt_bytes,
@@ -575,7 +588,7 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
     ints = make([dynamic]i32, 0, 64, context.temp_allocator),
     longs = make([dynamic]i64, 0, 4096, context.temp_allocator),
 
-    tags = make([dynamic]NBT_Tag, 0, 128, context.temp_allocator)
+    tags = make([dynamic]NBT_Tag, 0, tags_amount_guess, context.temp_allocator)
   }
 
   // DESC(dendo): recursivaly decode the tags

@@ -216,7 +216,7 @@ run_test :: proc(
   return statistics
 }
 
-run_tests :: proc(cpu_features: CPU_Features) -> (best: Compute_Methods) {
+run_tests :: #force_no_inline proc(cpu_features: CPU_Features) -> (best: Compute_Methods) {
   MiB :: 1 << 20
   bytes, err := mem.alloc_bytes_non_zeroed(MiB, alignment = mem.DEFAULT_ALIGNMENT)
   durations, err2 := make([dynamic]time.Duration, 0, 16)
