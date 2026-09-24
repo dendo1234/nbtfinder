@@ -6,42 +6,44 @@ import "../"
 import mu "vendor:microui"
 
 
-draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
+draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : ^nbtfinder.NBT_Tag) {
+
+  name := nbtfinder.nbt_string_get(&tag.name, appstate.header)
 
   switch tag.type {
     case .End:
       assert(false)
 
     case .Byte:
-      s := fmt.tprintf("%v: i8 = %v", tag.name, tag.value.byte)
+      s := fmt.tprintf("%v: i8 = %v", name, tag.value.byte)
       mu.label(ctx, s)
 
     case .Short:
-      s := fmt.tprintf("%v: i16 = %v", tag.name, tag.value.short)
+      s := fmt.tprintf("%v: i16 = %v", name, tag.value.short)
       mu.label(ctx, s)
 
     case .Int:
-      s := fmt.tprintf("%v: i32 = %v", tag.name, tag.value.integer)
+      s := fmt.tprintf("%v: i32 = %v", name, tag.value.integer)
       mu.label(ctx, s)
 
     case .Long:
-      s := fmt.tprintf("%v: i64 = %v", tag.name, tag.value.long)
+      s := fmt.tprintf("%v: i64 = %v", name, tag.value.long)
       mu.label(ctx, s)
 
     case .Float:
-      s := fmt.tprintf("%v: f32 = %v", tag.name, tag.value.float)
+      s := fmt.tprintf("%v: f32 = %v", name, tag.value.float)
       mu.label(ctx, s)
 
     case .Double:
-      s := fmt.tprintf("%v: f64 = %v", tag.name, tag.value.double)
+      s := fmt.tprintf("%v: f64 = %v", name, tag.value.double)
       mu.label(ctx, s)
 
     case .ByteArray:
-      s := fmt.tprintf("%v: [%v]i8", tag.name, tag.value.byte_array.count)
+      s := fmt.tprintf("%v: [%v]i8", name, tag.value.byte_array.count)
       mu.label(ctx, s)
 
     case .String:
-      s := fmt.tprintf("%v: string = \"%v\"", tag.name, tag.value.str)
+      s := fmt.tprintf("%v: string = \"%v\"", name, tag.value.str)
       mu.label(ctx, s)
 
     case .List:
@@ -49,13 +51,13 @@ draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : nbtfind
       count := tag.value.list.count
 
       assert(count >= 0)
-      s := fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " items", sep = "")
+      s := fmt.tprint(name, len(name) != 0 ? ": " : "", count, " items", sep = "")
       if .ACTIVE in mu.treenode(ctx, s) {
         for i : i32 = 0; i < count; i += 1 {
           tag := appstate.header.tags[start_index + u32(i)]
 
           mu.push_id_rawptr(ctx, &i, size_of(i))
-          draw_tag(ctx, appstate, tag)
+          draw_tag(ctx, appstate, &tag)
           mu.pop_id(ctx)
         }
       }
@@ -65,23 +67,23 @@ draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : nbtfind
       count := tag.value.compound.count
 
       assert(count >= 0)
-      s := fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " tags", sep = "")
+      s := fmt.tprint(name, len(name) != 0 ? ": " : "", count, " tags", sep = "")
       if .ACTIVE in mu.treenode(ctx, s, opt = { } ) {
         for i : i32 = 0; i < count; i += 1 {
           tag := appstate.header.tags[start_index + u32(i)]
 
           mu.push_id_rawptr(ctx, &i, size_of(i))
-          draw_tag(ctx, appstate, tag)
+          draw_tag(ctx, appstate, &tag)
           mu.pop_id(ctx)
         }
       }
 
     case .IntArray:
-      s := fmt.tprintf("%v: [%v]i32", tag.name, tag.value.int_array.count)
+      s := fmt.tprintf("%v: [%v]i32", name, tag.value.int_array.count)
       mu.label(ctx, s)
 
     case .LongArray:
-      s := fmt.tprintf("%v: [%v]i32", tag.name, tag.value.long_array.count)
+      s := fmt.tprintf("%v: [%v]i32", name, tag.value.long_array.count)
       mu.label(ctx, s)
 
     case:
@@ -92,7 +94,7 @@ draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : nbtfind
 draw_nbt_header :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, header : ^nbtfinder.NBT_Decoded_Header) {
   root_tag := header.tags[header.root_tag_index]
 
-  draw_tag(ctx, appstate, root_tag)
+  draw_tag(ctx, appstate, &root_tag)
 }
 
 microui_draw_commands :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, rect : mu.Rect) {

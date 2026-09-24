@@ -121,7 +121,7 @@ default_text: clay.TextElementConfig : {
   textColor = COLOR_BLACK
 }
 
-clay_draw_tag :: proc(appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
+clay_draw_tag :: proc(appstate : ^nbtfinder.AppState, tag : ^nbtfinder.NBT_Tag) {
   clay_listlike_config: clay.ElementDeclaration : {
     layout = {
       layoutDirection = .TopToBottom
@@ -187,7 +187,7 @@ clay_draw_tag :: proc(appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
           tag := appstate.header.tags[start_index + u32(i)]
 
           // NOTE: ID is auto assigned by clay
-          clay_draw_tag(appstate, tag)
+          clay_draw_tag(appstate, &tag)
         }
       }
 
@@ -200,62 +200,65 @@ clay_draw_tag :: proc(appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
     text: string
     image: rawptr
 
+    tag_name := nbtfinder.nbt_string_get(&tag.name, appstate.header)
+
     switch tag.type {
       case .End:
         assert(false)
 
       case .Byte:
-        text = fmt.tprintf("%v: i8 = %v", tag.name, tag.value.byte)
+        text = fmt.tprintf("%v: i8 = %v", tag_name, tag.value.byte)
         image = claystate.images.names.tag_icons.byte
 
       case .Short:
-        text = fmt.tprintf("%v: i16 = %v", tag.name, tag.value.short)
+        text = fmt.tprintf("%v: i16 = %v", tag_name, tag.value.short)
         image = claystate.images.names.tag_icons.short
 
       case .Int:
-        text = fmt.tprintf("%v: i32 = %v", tag.name, tag.value.integer)
+        text = fmt.tprintf("%v: i32 = %v", tag_name, tag.value.integer)
         image = claystate.images.names.tag_icons.int
 
       case .Long:
-        text = fmt.tprintf("%v: i64 = %v", tag.name, tag.value.long)
+        text = fmt.tprintf("%v: i64 = %v", tag_name, tag.value.long)
         image = claystate.images.names.tag_icons.long
 
       case .Float:
-        text = fmt.tprintf("%v: f32 = %v", tag.name, tag.value.float)
+        text = fmt.tprintf("%v: f32 = %v", tag_name, tag.value.float)
         image = claystate.images.names.tag_icons.float
 
       case .Double:
-        text = fmt.tprintf("%v: f64 = %v", tag.name, tag.value.double)
+        text = fmt.tprintf("%v: f64 = %v", tag_name, tag.value.double)
         image = claystate.images.names.tag_icons.double
 
       case .ByteArray:
-        text = fmt.tprintf("%v: [%v]i8", tag.name, tag.value.byte_array.count)
+        text = fmt.tprintf("%v: [%v]i8", tag_name, tag.value.byte_array.count)
         image = claystate.images.names.tag_icons.byte_array
 
       case .String:
-        text = fmt.tprintf("%v: string = \"%v\"", tag.name, tag.value.str)
+        value_str := nbtfinder.nbt_string_get(&tag.value.str, appstate.header)
+        text = fmt.tprintf("%v: string = \"%v\"", tag_name, value_str)
         image = claystate.images.names.tag_icons.string
 
       case .List:
         start_index = tag.value.list.start_index
         count = tag.value.list.count
 
-        text = fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " items", sep = "")
+        text = fmt.tprint(tag_name, len(tag_name) != 0 ? ": " : "", count, " items", sep = "")
         image = claystate.images.names.tag_icons.list
 
       case .Compound:
         start_index = tag.value.compound.start_index
         count = tag.value.compound.count
 
-        text = fmt.tprint(tag.name, len(tag.name) != 0 ? ": " : "", count, " tags", sep = "")
+        text = fmt.tprint(tag_name, len(tag_name) != 0 ? ": " : "", count, " tags", sep = "")
         image = claystate.images.names.tag_icons.compound
 
       case .IntArray:
-        text = fmt.tprintf("%v: [%v]i32", tag.name, tag.value.int_array.count)
+        text = fmt.tprintf("%v: [%v]i32", tag_name, tag.value.int_array.count)
         image = claystate.images.names.tag_icons.int_array
 
       case .LongArray:
-        text = fmt.tprintf("%v: [%v]i32", tag.name, tag.value.long_array.count)
+        text = fmt.tprintf("%v: [%v]i32", tag_name, tag.value.long_array.count)
         image = claystate.images.names.tag_icons.long_array
 
       case:
@@ -280,7 +283,7 @@ clay_draw_tag :: proc(appstate : ^nbtfinder.AppState, tag : nbtfinder.NBT_Tag) {
 clay_draw_nbt_header :: proc(appstate : ^nbtfinder.AppState, header : ^nbtfinder.NBT_Decoded_Header) {
   root_tag := header.tags[header.root_tag_index]
 
-  clay_draw_tag(appstate, root_tag)
+  clay_draw_tag(appstate, &root_tag)
 }
 
 clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_State, delta_time: f32) -> clay.ClayArray(clay.RenderCommand) {

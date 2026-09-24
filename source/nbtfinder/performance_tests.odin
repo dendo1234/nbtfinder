@@ -266,7 +266,7 @@ run_tests :: #force_no_inline proc(cpu_features: CPU_Features) -> (best: Compute
   delete(durations)
 
   nbt_decode_set_procedures(best, true)
-  {
+  if true {
     buf: b.Buffer
     err := gzip.load_from_file("level.dat", &buf, -1, context.temp_allocator)
     assert(err == nil)

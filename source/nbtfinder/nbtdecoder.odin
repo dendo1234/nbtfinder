@@ -37,15 +37,51 @@ IntsView  :: distinct ArrayView
 LongsView :: distinct ArrayView
 TagsView  :: distinct ArrayView
 
+NBT_String :: struct #raw_union {
+  // case size <= 5
+  inplace: struct {
+    chars: [5]u8 `fmt:"s,size"`,
+    _: u8 `fmt:"-"`, // this is for the type hack
+    size: u16 `fmt:"-"`
+  },
+  // case size > 5
+  indexed: struct {
+    index: u32,
+    _: u16 `fmt:"-"`, // padding
+    size: u16
+  },
+  raw: u64
+}
+
+// HACK(dendo): make the NBT_Tag struct smaller by placing the NBT_Type inside of the name: NBT_String.
+NBT_String_And_Type :: struct #raw_union {
+  name: NBT_String,
+  using _: struct {
+    _1: [5]u8, // padding
+    type: NBT_Type,
+    _2: u16 // padding
+  }
+}
+
+nbt_string_get :: proc(str: ^NBT_String, header: ^NBT_Decoded_Header) -> string {
+  size := str.inplace.size
+  if size <= size_of(str.inplace.chars) {
+    return strings.string_from_ptr(raw_data(str.inplace.chars[:]), int(size))
+  }
+
+  index := str.indexed.index
+  return strings.string_from_ptr(&header.strings[index], int(size))
+}
+
 NBT_Value :: struct #raw_union {
-  byte : i8,
+  byte : i8, // using 16 bytes to store a single byte. not fun
   short : i16,
   integer : i32,
   long : i64,
   float : f32,
   double : f64,
   byte_array : BytesView,
-  str : string, // to be changed
+  str : NBT_String,
   list : TagsView, // NOTE(dendo): this is probably not the best, but good enought
   compound : TagsView,
   int_array : IntsView,
@@ -54,8 +90,7 @@ NBT_Value :: struct #raw_union {
 
 NBT_Tag :: struct {
   // NOTE(dendo): nameless Nbt_Tag have name == 0
-  name : string,
-  type : NBT_Type,
+  using name_and_tag: NBT_String_And_Type,
   value : NBT_Value,
 }
 
@@ -66,6 +101,7 @@ NBT_Decoded_Header :: struct {
 
   // NOTE(dendo): these slices only contain data from the arrays Tagtypes themselves.
   // an actual long tag has it value stored inplace
+  strings: []u8,
   bytes : []i8,
   ints : []i32,
   longs : []i64,
@@ -85,11 +121,37 @@ NBT_Decoder :: struct {
   raw_data : []u8,
   index : uint,
 
+  strings: [dynamic]u8,
   bytes : [dynamic]i8,
   ints : [dynamic]i32,
   longs : [dynamic]i64,
 
   tags : [dynamic]NBT_Tag,
+
+  counters: struct {
+    tags: struct #raw_union {
+      raw: [13]u32,
+      using _: struct {
+        end: u32,
+        byte: u32,
+        short: u32,
+        integer: u32,
+        long: u32,
+        float: u32,
+        double: u32,
+        byte_array: u32,
+        str: u32,
+        list: u32,
+        compound: u32,
+        int_array: u32,
+        long_array: u32,
+      }
+    },
+    named: u32,
+    unnamed: u32,
+    zero_strings: u32,
+
+  }
 }
 
 // NOTE(dendo): for read_tag_value_number and read_tag_value_number_endian_specified,
@@ -149,23 +211,56 @@ read_tag_value_number :: proc(decoder : ^NBT_Decoder, $type : typeid) -> (ret : 
 }
 
 // NOTE: assumes lenght : u16 before the string itself
-read_tag_value_string :: proc(decoder : ^NBT_Decoder) -> (ret : string) {
+read_tag_value_string :: proc(decoder : ^NBT_Decoder) -> (ret : NBT_String) {
   string_lenght := read_tag_value_number(decoder, u16)
+
+  if string_lenght == 0 {
+    decoder.counters.zero_strings += 1
+
+    return ret
+  }
 
   assert(len(decoder.raw_data)-int(decoder.index + uint(string_lenght)) >= 0, "nbt passer failed")
 
-  bytes_string := decoder.raw_data[decoder.index:decoder.index+uint(string_lenght)]
-  // TODO(dendo): it seams a bit dumb to allocate a string for every field when most of the fields repeat the sames strings
-  // maybe implement a hash table with "known strings" and store them that way
-  str, err := strings.clone_from_bytes(bytes_string, context.allocator)
-  if err != nil {
-    fmt.printfln("\nError: %v", err)
+  if (string_lenght <= size_of(ret.inplace.chars)) {
+    // HACK(dendo): scalar SIMD! 🤯
+    // PS: i didn't test if this is faster than a naive solution
+    // TODO(dendo): decoder.raw_data[decoder.index+uint(string_lenght)-8] might be out of bounds
+    // if the first tag contains a string
+    text: u64 = intrinsics.unaligned_load(cast(^u64)&decoder.raw_data[decoder.index+uint(string_lenght)-8])
+
+    amount_to_shift := (8 - string_lenght) * 8
+    text = text >> amount_to_shift
+
+    ret.raw = text
+    ret.inplace.size = string_lenght
+
+    decoder.index += uint(string_lenght)
+    return ret
   }
 
-  assert(err == nil, "allocation failed")
+  start := len(decoder.strings)
+  end_size := start + int(string_lenght)
+
+  assert(start <= (1 << 32) - 1)
+
+  if cap(decoder.strings) < end_size {
+    reserve(&decoder.strings, cap(decoder.strings)*2)
+  }
+
+  resize(&decoder.strings, end_size)
+
+  runtime.mem_copy_non_overlapping(dst = &decoder.strings[start], src = &decoder.raw_data[decoder.index], len = int(string_lenght))
+
+  ret = {
+    indexed = {
+      index = u32(start),
+      size = string_lenght
+    }
+  }
 
   decoder.index += uint(string_lenght)
-  return str
+  return ret
 }
 
 read_tag_value_list_array_simd :: #force_inline proc(decoder: ^NBT_Decoder, $simd_type: typeid, $should_byte_swap: bool) -> (view: ArrayView) {
@@ -271,10 +366,10 @@ ReadResult :: enum {
 read_tag_named :: proc(decoder : ^NBT_Decoder, tag : ^NBT_Tag) -> (res: ReadResult) {
   current_ptr : [^]u8 = mem.ptr_offset(slice.as_ptr(decoder.raw_data), decoder.index) // for easier debuging
 
-  tag.type = NBT_Type(decoder.raw_data[decoder.index])
+  temp_type := NBT_Type(decoder.raw_data[decoder.index])
   decoder.index += 1
 
-  if tag.type != .End {
+  if temp_type != .End {
     // DESC: read key string after tag
 
     // NOTE(dendo): does every tag (apart from lists) has a string name?? it seams so but you can't be sure
@@ -282,14 +377,21 @@ read_tag_named :: proc(decoder : ^NBT_Decoder, tag : ^NBT_Tag) -> (res: ReadResu
     // maybe on bedrock nbt this is not true? It seams that there List could be the root.
     // Even so, the root tag, usualy has a name with size == 0
 
+    decoder.counters.named += 1
+
+    // WARN: this overrides tag.type
     tag.name = read_tag_value_string(decoder)
     //fmt.println(tag.name)
   }
+
+  tag.type = temp_type
 
   return read_tag_value(decoder, tag)
 }
 
 read_tag_unnamed :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: ReadResult) {
+  decoder.counters.unnamed += 1
+
   current_ptr : [^]u8 = mem.ptr_offset(slice.as_ptr(decoder.raw_data), decoder.index) // for easier debuging
   tag.type = NBT_Type(decoder.raw_data[decoder.index])
   decoder.index += 1
@@ -339,6 +441,8 @@ read_tag_value_list :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: Read
 
   size := read_tag_value_number(decoder, i32)
 
+  decoder.counters.unnamed += u32(size)
+
   children := make([dynamic]NBT_Tag, 0, size, context.temp_allocator)
 
   last_res : ReadResult = .ok
@@ -360,18 +464,14 @@ read_tag_value_list :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: Read
   // TODO(dendo): if size == 0, start_index = 0
     start_index := len(decoder.tags)
     children_amount := len(children)
-    reserve(&decoder.tags, len(decoder.tags) + len(children))
 
-    for i := 0; i < children_amount; i += 1 {
-      append(&decoder.tags, children[i])
-    }
-
+    append(&decoder.tags, ..children[:])
 
     assert(start_index <= (1 << 32)-1)
     assert(children_amount <= (1 << 31)-1)
 
-    tag.value.compound.start_index = u32(start_index)
-    tag.value.compound.count = i32(children_amount)
+    tag.value.list.start_index = u32(start_index)
+    tag.value.list.count = i32(children_amount)
 
     return .ok
   } else {
@@ -380,6 +480,8 @@ read_tag_value_list :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: Read
 }
 
 read_tag_value :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: ReadResult) {
+  decoder.counters.tags.raw[tag.type] += 1
+
   switch tag.type {
     case .End:
       return .end
@@ -584,6 +686,7 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
     index = 0,
     // TODO(dendo): find better starter size for dynamic arrays
     // TODO(dendo): test performance of context.temp_allocator
+    strings = make([dynamic]u8, 0, 4096, context.temp_allocator),
     bytes = make([dynamic]i8, 0, 4096, context.temp_allocator),
     ints = make([dynamic]i32, 0, 64, context.temp_allocator),
     longs = make([dynamic]i64, 0, 4096, context.temp_allocator),
@@ -608,11 +711,13 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
   bytes_count := len(decoder.bytes)
   ints_count  := len(decoder.ints)
   longs_count := len(decoder.longs)
+  strings_count := len(decoder.strings)
 
   tags_bytes := tags_count*size_of(decoder.tags[0])
   bytes_bytes := bytes_count*size_of(decoder.bytes[0])
   ints_bytes := ints_count*size_of(decoder.ints[0])
   longs_bytes := longs_count*size_of(decoder.longs[0])
+  strings_bytes := strings_count*size_of(decoder.strings[0])
 
   decoded_size : int
 
@@ -621,6 +726,7 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
   decoded_size += bytes_bytes
   decoded_size += ints_bytes
   decoded_size += longs_bytes
+  decoded_size += strings_count
 
   decoded_memory, err := runtime.mem_alloc(decoded_size, alignment = 4096, allocator = context.allocator)
   header = nil
@@ -650,6 +756,11 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
       header.longs = slice.from_ptr(cast(^i64)(&decoded_memory[offset]), longs_count)
       offset += longs_bytes
     }
+
+    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.strings), len = strings_bytes)
+    header.strings = slice.from_ptr(cast(^u8)(&decoded_memory[offset]), strings_count)
+    offset += strings_bytes
+
   } else {
     assert(false)
   }
