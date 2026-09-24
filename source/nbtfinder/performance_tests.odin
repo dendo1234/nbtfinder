@@ -262,7 +262,6 @@ run_tests :: proc(cpu_features: CPU_Features) -> (best: Compute_Methods) {
     best_avg = statistics[3].avg
   }
 
-
   delete(bytes)
   delete(durations)
 
@@ -280,11 +279,6 @@ run_tests :: proc(cpu_features: CPU_Features) -> (best: Compute_Methods) {
     free(header)
   }
 
-
-
-
-
-
   return best
-
 }
+

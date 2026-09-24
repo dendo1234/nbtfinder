@@ -317,11 +317,8 @@ read_tag_value_compound :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: 
   if last_res == .end {
     start_index := len(decoder.tags)
     children_amount := len(children)
-    reserve(&decoder.tags, len(decoder.tags) + len(children))
 
-    for i := 0; i < children_amount; i += 1 {
-      append(&decoder.tags, children[i])
-    }
+    append(&decoder.tags, ..children[:])
 
     assert(start_index <= (1 << 32)-1)
     assert(children_amount <= (1 << 31)-1)
@@ -634,10 +631,12 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
     header.ints = slice.from_ptr(cast(^i32)(&decoded_memory[offset]), ints_count)
     offset += ints_bytes
 
-    // TODO(dendo): does this errors if len = 0 ??
-    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.longs), len = longs_bytes)
-    header.longs = slice.from_ptr(cast(^i64)(&decoded_memory[offset]), longs_count)
-    offset += longs_bytes
+    // NOTE(dendo): because of the bounds check this will fail even thougth we never access the out of bounds decoded_memory[offset] pointer
+    if (longs_bytes > 0) {
+      runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.longs), len = longs_bytes)
+      header.longs = slice.from_ptr(cast(^i64)(&decoded_memory[offset]), longs_count)
+      offset += longs_bytes
+    }
   } else {
     assert(false)
   }
