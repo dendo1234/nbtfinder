@@ -44,6 +44,7 @@ Clay_State :: struct {
   treepool: [48]Pool_Item,
   current_frame: i32,
   //current_ident: u16,
+  is_scrolling: bool,
 }
 
 claystate : ^Clay_State
@@ -310,12 +311,85 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
             padding = { 16, 16, 16, 16 },
             childGap = 16,
         },
-        clip = {
-          vertical = true,
-          childOffset = clay.GetScrollOffset()
-        }
       }) {
-        clay_draw_nbt_header(appstate, appstate.header)
+        if clay.UI(clay.ID("Tags"))({
+          layout = {
+            sizing = { width = clay.SizingGrow({}), height = clay.SizingGrow({}) },
+          },
+          clip = {
+            vertical = true,
+            childOffset = clay.GetScrollOffset()
+          }
+        }) {
+          clay_draw_nbt_header(appstate, appstate.header)
+        }
+
+        tags_id := clay.GetElementId(clay.MakeString("Tags"))
+        scroll_data := clay.GetScrollContainerData(tags_id)
+
+        if scroll_data.contentDimensions.height > scroll_data.scrollContainerDimensions.height {
+          view_percent := f32(scroll_data.scrollContainerDimensions.height)/f32(scroll_data.contentDimensions.height)
+          bar_percent := (-scroll_data.scrollPosition[1] / scroll_data.contentDimensions.height)
+          //bar_percent = bar_percent-view_percent/2
+          bar_percent = max(bar_percent, 0)
+          bar_percent = min(bar_percent, 1)
+          bar_pos := bar_percent*scroll_data.scrollContainerDimensions.height
+
+
+          if clay.UI(clay.ID("ScrollBar"))({
+            layout = {
+              sizing = { width = clay.SizingFixed(8), height = clay.SizingGrow() }
+            },
+            clip = {
+              vertical = true,
+              childOffset = {0, bar_pos}
+            },
+            backgroundColor = COLOR_BLACK,
+          }) {
+            scrollbar :: proc (id, outer_id: clay.ElementId, pointerData: clay.PointerData) {
+              outer_scroll_data := clay.GetScrollContainerData(outer_id)
+              scroll_data := clay.GetScrollContainerData(id)
+              view_percent := f32(outer_scroll_data.scrollContainerDimensions.height)/f32(outer_scroll_data.contentDimensions.height)
+
+              element_data := clay.GetElementData(id)
+              relative_y_pixel := pointerData.position[1] - element_data.boundingBox.y
+
+              relative_y_percentage := relative_y_pixel / element_data.boundingBox.height
+              relative_y_percentage = min(relative_y_percentage, 1 - view_percent/2)
+              relative_y_percentage -= view_percent/2
+              relative_y_percentage = max(relative_y_percentage, 0)
+
+              outer_scroll_data.scrollPosition[1] = -relative_y_percentage*outer_scroll_data.contentDimensions.height
+            }
+            scrollbar_id := clay.GetElementId(clay.MakeString("ScrollBar"))
+
+            pointerState := clay.GetPointerState()
+
+            if pointerState.state == .Released {
+              claystate.is_scrolling = false
+            }
+
+            if claystate.is_scrolling{
+              scrollbar(scrollbar_id, tags_id, clay.GetPointerState())
+            }
+
+            scrollbar_hover :: proc "c" (id: clay.ElementId, pointerData: clay.PointerData, userData: rawptr) {
+              if pointerData.state == .PressedThisFrame {
+                claystate.is_scrolling = true
+              }
+            }
+            clay.OnHover(scrollbar_hover, rawptr(uintptr(tags_id.id)))
+
+            if clay.UI()({
+              layout = {
+                sizing = { width = clay.SizingFixed(8), height = clay.SizingPercent(view_percent) }
+              },
+              backgroundColor = COLOR_LIGHT,
+            }) {}
+          }
+        }
+
+
       }
 
       // DESC: STATUS BAR
