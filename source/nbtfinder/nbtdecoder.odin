@@ -63,7 +63,7 @@ NBT_String_And_Type :: struct #raw_union {
   }
 }
 
-nbt_string_get :: proc(str: ^NBT_String, header: ^NBT_Decoded_Header) -> string {
+nbt_string_get :: proc(str: ^NBT_String, header: NBT_Decoded_Header) -> string {
   size := str.inplace.size
   if size <= size_of(str.inplace.chars) {
     return strings.string_from_ptr(raw_data(str.inplace.chars[:]), int(size))

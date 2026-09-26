@@ -8,7 +8,7 @@ import mu "vendor:microui"
 
 draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : ^nbtfinder.NBT_Tag) {
 
-  name := nbtfinder.nbt_string_get(&tag.name, appstate.header)
+  name := nbtfinder.nbt_string_get(&tag.name, appstate.header^)
 
   switch tag.type {
     case .End:

@@ -27,9 +27,15 @@ SDL3_Clay_State :: struct {
   fonts: [4]^ttf.Font,
 
   last_update_time: u64,
+  debug_mode: bool,
+
+  is_color_blending: bool,
+  blending_color: sdl3.FColor,
 
   claystate: ui.Clay_State,
 }
+
+COLOR_RANGE :: 255
 
 sdl3_clay_state : SDL3_Clay_State
 
@@ -142,6 +148,13 @@ clay_init :: proc() -> (ok: bool) {
 
 clay_process_event :: proc(event: ^sdl3.Event) {
   #partial switch event.type {
+  case .KEY_DOWN:
+    key := event.key
+    if key.key == sdl3.K_F11 {
+      sdl3_clay_state.debug_mode = !sdl3_clay_state.debug_mode
+      clay.SetDebugModeEnabled(sdl3_clay_state.debug_mode)
+    }
+
   case .MOUSE_BUTTON_DOWN, .MOUSE_BUTTON_UP:
     switch event.button.button {
     case 1:
@@ -170,9 +183,19 @@ clay_process_event :: proc(event: ^sdl3.Event) {
 
 NUM_CIRCLE_SEGMENTS :: 16
 
-clay_render_fill_rounded_rect :: proc(rect : sdl3.FRect, cornerRadius: f32, _color: clay.Color) {
-  color: sdl3.FColor = { _color.r/255, _color.g/255, _color.b/255, _color.a/255 }
+alpha_blend :: proc(background, foreground : sdl3.FColor) -> sdl3.FColor {
+  ret: sdl3.FColor
 
+  ret[3] = foreground[3] + background[3]*(1 - foreground[3])
+
+  ret[0] = (foreground[0]*foreground[3] + background[0]*background[3]*(1 - foreground[3]))/ret[3]
+  ret[1] = (foreground[1]*foreground[3] + background[1]*background[3]*(1 - foreground[3]))/ret[3]
+  ret[2] = (foreground[2]*foreground[3] + background[2]*background[3]*(1 - foreground[3]))/ret[3]
+
+  return ret
+}
+
+clay_render_fill_rounded_rect :: proc(rect : sdl3.FRect, cornerRadius: f32, color: sdl3.FColor) {
   indexCount, vertexCount : i32
 
   minRadius := min(rect.w, rect.h) / 2.0
@@ -340,8 +363,8 @@ clay_render_fill_rounded_rect :: proc(rect : sdl3.FRect, cornerRadius: f32, _col
   sdl3.RenderGeometry(platstate.renderer, nil, raw_data(vertices), vertexCount, raw_data(indices), indexCount)
 }
 
-clay_render_arc :: proc (center: sdl3.FPoint, radius, start_angle, end_angle, thickness : f32, color: clay.Color) {
-  sdl3.SetRenderDrawColor(platstate.renderer, u8(color.r), u8(color.g), u8(color.b), u8(color.a))
+clay_render_arc :: proc (center: sdl3.FPoint, radius, start_angle, end_angle, thickness : f32) {
+  // color is assumed alreadly set
 
   rad_start := start_angle * (math.PI / 180.0)
   rad_end := end_angle * (math.PI / 180.0)
@@ -370,6 +393,8 @@ clay_render_arc :: proc (center: sdl3.FPoint, radius, start_angle, end_angle, th
 }
 
 clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^clay.ClayArray(clay.RenderCommand)) {
+  sdl3.SetRenderDrawBlendMode(platstate.renderer, { .BLEND })
+
   for i in 0..<i32(render_commands.length) {
       rcmd := clay.RenderCommandArray_Get(render_commands, i)
       bounding_box : clay.BoundingBox = rcmd.boundingBox
@@ -379,9 +404,13 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
       case .None:
       case .Rectangle:
         rectangle := rcmd.renderData.rectangle
-        color := rectangle.backgroundColor
+        cc := rectangle.backgroundColor
+        color: sdl3.FColor = { cc[0]/COLOR_RANGE, cc[1]/COLOR_RANGE, cc[2]/COLOR_RANGE, cc[3]/COLOR_RANGE }
 
-        sdl3.SetRenderDrawColor(renderer, u8(color[0]), u8(color[1]), u8(color[2]), u8(color[3]))
+        if sdl3_clay_state.is_color_blending {
+          color = alpha_blend(color, sdl3_clay_state.blending_color)
+        }
+        sdl3.SetRenderDrawColorFloat(renderer, color[0], color[1], color[2], color[3])
 
         if rectangle.cornerRadius.topLeft > 0 {
           clay_render_fill_rounded_rect(rect, rectangle.cornerRadius.topLeft, color)
@@ -391,6 +420,14 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
       case .Border:
         border := rcmd.renderData.border
 
+        cc := border.color
+        color: sdl3.FColor = { cc[0]/COLOR_RANGE, cc[1]/COLOR_RANGE, cc[2]/COLOR_RANGE, cc[3]/COLOR_RANGE }
+
+        if sdl3_clay_state.is_color_blending {
+          color = alpha_blend(color, sdl3_clay_state.blending_color)
+        }
+        sdl3.SetRenderDrawColorFloat(renderer, color[0], color[1], color[2], color[3])
+
         minRadius := min(rect.w, rect.h) / 2.0
         clampedRadii : clay.CornerRadius = {
           topLeft = min(border.cornerRadius.topLeft, minRadius),
@@ -399,7 +436,6 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
           bottomRight = min(border.cornerRadius.bottomRight, minRadius)
         };
         //edges
-        sdl3.SetRenderDrawColor(platstate.renderer, u8(border.color.r), u8(border.color.g), u8(border.color.b), u8(border.color.a))
         if (border.width.left > 0) {
           starting_y := rect.y + clampedRadii.topLeft
           length := rect.h - clampedRadii.topLeft - clampedRadii.bottomLeft
@@ -431,25 +467,25 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
           centerX := rect.x + clampedRadii.topLeft -1
           centerY := rect.y + clampedRadii.topLeft - 1
           clay_render_arc({centerX, centerY}, clampedRadii.topLeft,
-                180.0, 270.0, f32(border.width.top), border.color)
+                180.0, 270.0, f32(border.width.top))
         }
         if (border.cornerRadius.topRight > 0) {
           centerX := rect.x + rect.w - clampedRadii.topRight
           centerY := rect.y + clampedRadii.topRight - 1
           clay_render_arc({centerX, centerY}, clampedRadii.topRight,
-              270.0, 360.0, f32(border.width.top), border.color)
+              270.0, 360.0, f32(border.width.top))
         }
         if (border.cornerRadius.bottomLeft > 0) {
           centerX := rect.x + clampedRadii.bottomLeft -1
           centerY := rect.y + rect.h - clampedRadii.bottomLeft
           clay_render_arc({centerX, centerY}, clampedRadii.bottomLeft,
-              90.0, 180.0, f32(border.width.bottom), border.color)
+              90.0, 180.0, f32(border.width.bottom))
         }
         if (border.cornerRadius.bottomRight > 0) {
           centerX := rect.x + rect.w - clampedRadii.bottomRight
           centerY := rect.y + rect.h - clampedRadii.bottomRight
           clay_render_arc({centerX, centerY}, clampedRadii.bottomRight,
-              0.0, 90.0, f32(border.width.bottom), border.color)
+              0.0, 90.0, f32(border.width.bottom))
         }
 
       case .Text:
@@ -458,15 +494,26 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
         font := sdl3_clay_state.fonts[config.fontId]
         ttf.SetFontSize(font, f32(config.fontSize))
 
+        cc := config.textColor
+        color: sdl3.FColor = { cc[0]/COLOR_RANGE, cc[1]/COLOR_RANGE, cc[2]/COLOR_RANGE, cc[3]/COLOR_RANGE }
+        if sdl3_clay_state.is_color_blending {
+          color = alpha_blend(color, sdl3_clay_state.blending_color)
+        }
+
         text := ttf.CreateText(platstate.text_engine, font, cstring(config.stringContents.chars), uint(config.stringContents.length))
         assert(text != nil)
 
-        ttf.SetTextColor(text, u8(config.textColor.r), u8(config.textColor.g), u8(config.textColor.b), u8(config.textColor.a))
+        ttf.SetTextColorFloat(text, color[0], color[1], color[2], color[3])
         ttf.DrawRendererText(text, rect.x, rect.y)
         ttf.DestroyText(text)
       case .Image:
         texture := (^sdl3.Texture)(rcmd.renderData.image.imageData)
         sdl3.RenderTexture(platstate.renderer, texture, nil, &rect)
+        if sdl3_clay_state.is_color_blending {
+          colors := sdl3_clay_state.blending_color
+          sdl3.SetRenderDrawColorFloat(platstate.renderer, colors[0], colors[1], colors[2], colors[3])
+          sdl3.RenderFillRect(renderer, &rect)
+        }
       case .ScissorStart:
         boundingBox := rcmd.boundingBox
         currentClippingRectangle : sdl3.Rect = {
@@ -480,6 +527,20 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
       case .ScissorEnd:
         sdl3.SetRenderClipRect(platstate.renderer, nil)
 
+      case .OverlayColorStart:
+        assert(sdl3_clay_state.is_color_blending == false, "renderer don't support stacking multiple color blends")
+        clay_color := rcmd.renderData.overlayColor.color
+        sdl3_clay_state.blending_color = {
+          clay_color[0]/COLOR_RANGE,
+          clay_color[1]/COLOR_RANGE,
+          clay_color[2]/COLOR_RANGE,
+          clay_color[3]/COLOR_RANGE
+        }
+        sdl3_clay_state.is_color_blending = true
+
+      case .OverlayColorEnd:
+        sdl3_clay_state.is_color_blending = false
+
       case:
         assert(false, "Clay render command not implemented")
       }
@@ -492,13 +553,13 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) {
   temp_time := sdl3.GetTicksNS()
   delta_time := temp_time - sdl3_clay_state.last_update_time
   sdl3_clay_state.last_update_time = temp_time
-  fdelta: f32 = f32(delta_time*1e9)
+  fdelta: f32 = f32(delta_time)/1e9
 
   clay.SetPointerState(
       { sdl3_clay_state.mouse_x, sdl3_clay_state.mouse_y },
       sdl3_clay_state.is_left_mouse_down,
   )
-  clay.UpdateScrollContainers(!sdl3_clay_state.claystate.is_scrolling, {sdl3_clay_state.wheel_x, sdl3_clay_state.wheel_y}, fdelta)
+  clay.UpdateScrollContainers(!ui.clay_is_scrolling(sdl3_clay_state.claystate), {sdl3_clay_state.wheel_x, sdl3_clay_state.wheel_y}, fdelta)
   sdl3_clay_state.wheel_x = 0
   sdl3_clay_state.wheel_y = 0
 

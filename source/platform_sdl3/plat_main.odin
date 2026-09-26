@@ -83,7 +83,7 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
       return sdl3.AppResult.FAILURE
     }
 
-    if (!sdl3.SetHint(sdl3.HINT_MAIN_CALLBACK_RATE, "waitevent")) {
+    if (!sdl3.SetHint(sdl3.HINT_MAIN_CALLBACK_RATE, "60")) {
       fmt.eprintfln("Failed to set main callback rate, SDL_ERROR: %s", sdl3.GetError())
       return sdl3.AppResult.FAILURE
     }
