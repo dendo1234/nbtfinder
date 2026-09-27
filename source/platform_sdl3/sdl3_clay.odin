@@ -15,6 +15,7 @@ import "../nbtfinder/ui"
 
 COLOR_RANGE :: 255 // divisor to apply to the clay.Color values. 255 means values are 0 - 255
 NUM_CIRCLE_SEGMENTS :: 12 // resolution of circles
+WHEEL_SENSITIVITY :: 2
 
 SDL3_Clay_State :: struct {
   is_left_mouse_down: bool,
@@ -173,8 +174,8 @@ clay_process_event :: proc(event: ^sdl3.Event) {
     sdl3_clay_state.mouse_x = event.motion.x
     sdl3_clay_state.mouse_y = event.motion.y
   case .MOUSE_WHEEL:
-    sdl3_clay_state.wheel_x += event.wheel.x
-    sdl3_clay_state.wheel_y += event.wheel.y
+    sdl3_clay_state.wheel_x += event.wheel.x * WHEEL_SENSITIVITY
+    sdl3_clay_state.wheel_y += event.wheel.y * WHEEL_SENSITIVITY
   case .WINDOW_RESIZED:
     w := event.window.data1
     h := event.window.data2
@@ -595,7 +596,7 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) {
       { sdl3_clay_state.mouse_x, sdl3_clay_state.mouse_y },
       sdl3_clay_state.is_left_mouse_down,
   )
-  clay.UpdateScrollContainers(!ui.clay_is_scrolling(sdl3_clay_state.claystate), {sdl3_clay_state.wheel_x, sdl3_clay_state.wheel_y}, fdelta)
+  clay.UpdateScrollContainers(!ui.clay_is_scrolling(sdl3_clay_state.claystate) && sdl3_clay_state.claystate.enable_drag, {sdl3_clay_state.wheel_x, sdl3_clay_state.wheel_y}, fdelta)
   sdl3_clay_state.wheel_x = 0
   sdl3_clay_state.wheel_y = 0
 

@@ -22,6 +22,9 @@ Pool_Item :: struct {
 TREENODE_IDENT :: 16
 
 Clay_State :: struct {
+  print_types: bool,
+  enable_drag: bool,
+
   images: struct #raw_union {
     names: struct {
       tag_icons: struct {
@@ -299,67 +302,127 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
   text: string
   image: rawptr
 
+  type_name: string
   tag_name := nbtfinder.nbt_string_get(&tag.name, header)
+  value: any // crazy RTTI
+  print_scalar_like: bool
 
   switch tag.type {
     case .End:
       assert(false)
 
     case .Byte:
-      text = fmt.tprintf("%v: i8 = %v", tag_name, tag.value.byte)
+      type_name = "i8"
+      value = tag.value.byte
       image = claystate.images.names.tag_icons.byte
+      print_scalar_like = true
 
     case .Short:
-      text = fmt.tprintf("%v: i16 = %v", tag_name, tag.value.short)
+      type_name = "i16"
+      value = tag.value.short
       image = claystate.images.names.tag_icons.short
+      print_scalar_like = true
 
     case .Int:
-      text = fmt.tprintf("%v: i32 = %v", tag_name, tag.value.integer)
+      type_name = "i32"
+      value = tag.value.integer
       image = claystate.images.names.tag_icons.int
+      print_scalar_like = true
 
     case .Long:
-      text = fmt.tprintf("%v: i64 = %v", tag_name, tag.value.long)
+      type_name = "i64"
+      value = tag.value.long
       image = claystate.images.names.tag_icons.long
+      print_scalar_like = true
 
     case .Float:
-      text = fmt.tprintf("%v: f32 = %v", tag_name, tag.value.float)
+      type_name = "f32"
+      value = tag.value.float
       image = claystate.images.names.tag_icons.float
+      print_scalar_like = true
 
     case .Double:
-      text = fmt.tprintf("%v: f64 = %v", tag_name, tag.value.double)
+      type_name = "f64"
+      value = tag.value.double
       image = claystate.images.names.tag_icons.double
+      print_scalar_like = true
 
     case .ByteArray:
-      text = fmt.tprintf("%v: [%v]i8", tag_name, tag.value.byte_array.count)
+      type_name = "i8"
+      value = tag.value.byte_array.count
       image = claystate.images.names.tag_icons.byte_array
+      print_scalar_like = false
 
     case .String:
+      type_name = "string"
       value_str := nbtfinder.nbt_string_get(&tag.value.str, header)
-      text = fmt.tprintf("%v: string = \"%v\"", tag_name, value_str)
+
+      value = value_str
       image = claystate.images.names.tag_icons.string
+      print_scalar_like = true
 
     case .List:
       count := tag.value.list.count & 0x00ffffff
 
-      text = fmt.tprint(tag_name, len(tag_name) != 0 ? ": " : "", count, " items", sep = "")
+      type_name = "NBT_Value"
+      value = count
       image = claystate.images.names.tag_icons.list
+      print_scalar_like = false
 
     case .Compound:
       count := tag.value.compound.count
 
-      text = fmt.tprint(tag_name, len(tag_name) != 0 ? ": " : "", count, " tags", sep = "")
+      type_name = "NBT_Tag"
+      value = count
       image = claystate.images.names.tag_icons.compound
+      print_scalar_like = false
 
     case .IntArray:
-      text = fmt.tprintf("%v: [%v]i32", tag_name, tag.value.int_array.count)
+      type_name = "i32"
+      value = tag.value.int_array.count
       image = claystate.images.names.tag_icons.int_array
+      print_scalar_like = false
 
     case .LongArray:
-      text = fmt.tprintf("%v: [%v]i64", tag_name, tag.value.long_array.count)
+      type_name = "i64"
+      value = tag.value.long_array.count
       image = claystate.images.names.tag_icons.long_array
+      print_scalar_like = false
 
     case:
       assert(false)
+  }
+ 
+  format_string: string
+  if print_scalar_like {
+    if len(tag_name) == 0 {
+      if claystate.print_types == true {
+        text = fmt.tprintf("%T = %[0]w", value)
+      } else {
+        text = fmt.tprintf("%w", value)
+      }
+    } else {
+      if claystate.print_types == true {
+        text = fmt.tprintf("%v: %T = %[1]w", tag_name, value)
+      } else {
+        text = fmt.tprintf("%v: %w", tag_name, value)
+      }
+    }
+  } else {
+    // print list like
+    if len(tag_name) == 0 {
+      if claystate.print_types == true {
+        text = fmt.tprintf("[%v]%v", value, type_name)
+      } else {
+        text = fmt.tprintf("[%v]", value)
+      }
+    } else {
+      if claystate.print_types == true {
+        text = fmt.tprintf("%v: [%v]%v", tag_name, value, type_name)
+      } else {
+        text = fmt.tprintf("%v: [%v]", tag_name, value)
+      }
+    }
   }
 
   if tag.type == .Compound || tag.type == .List {
@@ -623,6 +686,16 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
 
       clay_nbt_browser(appstate.header^)
 
+      if clay.UI()({
+        layout = {
+          sizing = { width = clay.SizingFixed(32), height = clay.SizingFixed(32) }
+        },
+        backgroundColor = COLOR_ORANGE
+      }) {
+        if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
+          claystate.print_types = !claystate.print_types
+        }
+      }
       // DESC: STATUS BAR
       if clay.UI()({}) {
         clay.Text(text, default_text)
