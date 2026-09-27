@@ -192,9 +192,7 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
     }
   } // end clay_basic_tag
 
-  clay_dropdown_tag :: proc (header: nbtfinder.NBT_Decoded_Header, text: string, image: rawptr, start_index: u32, count: i32, child_index: u32) {
-    assert(count >= 0)
-
+  clay_dropdown_tag :: proc (header: nbtfinder.NBT_Decoded_Header, text: string, image: rawptr, child_index: u32, list_tag: nbtfinder.NBT_Tag) {
     tree_hover :: proc "c" (id: clay.ElementId, pointerData: clay.PointerData, userData: rawptr) {
       id := u32(uintptr(userData))
 
@@ -209,6 +207,15 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
 
         }
       }
+    }
+
+    start_index: u32 = list_tag.value.list.start_index
+    count: i32
+    if list_tag.type == .Compound {
+      count = list_tag.value.compound.count
+    } else {
+      assert(list_tag.type == .List)
+      count = list_tag.value.list.count & 0x00ffffff
     }
 
     if clay.UI(clay.ID_LOCAL("TagList", child_index))({
@@ -269,18 +276,26 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
               childGap = 4,
             }
           }) {
-            for child_index : i32 = 0; child_index < count; child_index += 1 {
-              tag := header.tags[start_index + u32(child_index)]
+            if list_tag.type == .Compound {
+              for child_index : i32 = 0; child_index < count; child_index += 1 {
+                tag := header.tags[start_index + u32(child_index)]
 
-              clay_draw_tag(header, &tag, u32(child_index))
+                clay_draw_tag(header, &tag, u32(child_index))
+              }
+            } else {
+              for child_index : i32 = 0; child_index < count; child_index += 1 {
+                tag : nbtfinder.NBT_Tag
+                tag.type = list_tag.value.list.children_type
+                tag.value = header.unnamed_tags[start_index + u32(child_index)]
+
+                clay_draw_tag(header, &tag, u32(child_index))
+              }
             }
           }
         }
       }
     } // end clay_dropdown_tag
 
-  start_index : u32
-  count : i32
   text: string
   image: rawptr
 
@@ -324,15 +339,13 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
       image = claystate.images.names.tag_icons.string
 
     case .List:
-      start_index = tag.value.list.start_index
-      count = tag.value.list.count
+      count := tag.value.list.count & 0x00ffffff
 
       text = fmt.tprint(tag_name, len(tag_name) != 0 ? ": " : "", count, " items", sep = "")
       image = claystate.images.names.tag_icons.list
 
     case .Compound:
-      start_index = tag.value.compound.start_index
-      count = tag.value.compound.count
+      count := tag.value.compound.count
 
       text = fmt.tprint(tag_name, len(tag_name) != 0 ? ": " : "", count, " tags", sep = "")
       image = claystate.images.names.tag_icons.compound
@@ -350,7 +363,7 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
   }
 
   if tag.type == .Compound || tag.type == .List {
-    clay_dropdown_tag(header, text, image, start_index, count, child_index)
+    clay_dropdown_tag(header, text, image, child_index, tag^)
   } else {
     clay_basic_tag(text, image, child_index)
   }

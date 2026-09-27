@@ -35,7 +35,26 @@ ArrayView :: struct {
 BytesView :: distinct ArrayView
 IntsView  :: distinct ArrayView
 LongsView :: distinct ArrayView
-TagsView  :: distinct ArrayView
+
+Named_Tags_View  :: struct {
+  start_index: u32,
+  count: i32
+}
+
+// HACK(dendo): another shortcut. NBT format says we can have (2^31-1) element lists.
+// but, to keep NBT_Value at 8 bytes, the list children type is stored on the upper "count" byte
+// so the maximum amount of elements is limited to 2^24-1,
+Unnamed_Tags_View  :: struct {
+  start_index: u32,
+  using _1: struct #raw_union {
+    count: i32,
+    using _2: struct {
+      count_low: u16,
+      count_high: u8,
+      children_type: NBT_Type
+    }
+  },
+}
 
 NBT_String :: struct #raw_union {
   // case size <= 5
@@ -82,8 +101,8 @@ NBT_Value :: struct #raw_union {
   double : f64,
   byte_array : BytesView,
   str : NBT_String,
-  list : TagsView, // NOTE(dendo): this is probably not the best, but good enought
-  compound : TagsView,
+  list : Unnamed_Tags_View, // NOTE(dendo): this is probably not the best, but good enought
+  compound : Named_Tags_View,
   int_array : IntsView,
   long_array : LongsView,
 }
@@ -98,6 +117,7 @@ NBT_Decoded_Header :: struct {
   // NOTE: children are stored togheter
   root_tag_index : u32,
   tags : []NBT_Tag,
+  unnamed_tags: []NBT_Value,
 
   // NOTE(dendo): these slices only contain data from the arrays Tagtypes themselves.
   // an actual long tag has it value stored inplace
@@ -127,6 +147,7 @@ NBT_Decoder :: struct {
   longs : [dynamic]i64,
 
   tags : [dynamic]NBT_Tag,
+  unnamed_tags: [dynamic]NBT_Value,
 
   counters: struct {
     tags: struct #raw_union {
@@ -150,7 +171,7 @@ NBT_Decoder :: struct {
     named: u32,
     unnamed: u32,
     zero_strings: u32,
-
+    big_lists: u32,
   }
 }
 
@@ -443,17 +464,17 @@ read_tag_value_list :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: Read
 
   decoder.counters.unnamed += u32(size)
 
-  children := make([dynamic]NBT_Tag, 0, size, context.temp_allocator)
+  children := make([dynamic]NBT_Value, size, context.temp_allocator)
 
   last_res : ReadResult = .ok
   for i : i32 = 0; i < size; i += 1 {
-    temp_tag : NBT_Tag
+      temp_tag : NBT_Tag
     temp_tag.type = list_tag_type
 
     last_res = read_tag_value(decoder, &temp_tag)
 
     if (last_res == .ok) {
-      append(&children, temp_tag)
+      children[i] = temp_tag.value
     } else {
       break;
     }
@@ -462,16 +483,23 @@ read_tag_value_list :: proc(decoder : ^NBT_Decoder, tag: ^NBT_Tag) -> (res: Read
   assert(last_res != .end)
   if last_res == .ok {
   // TODO(dendo): if size == 0, start_index = 0
-    start_index := len(decoder.tags)
+    start_index := len(decoder.unnamed_tags)
     children_amount := len(children)
 
-    append(&decoder.tags, ..children[:])
+    append(&decoder.unnamed_tags, ..children[:])
 
     assert(start_index <= (1 << 32)-1)
-    assert(children_amount <= (1 << 31)-1)
+    //assert(children_amount <= (1 << 31)-1)
+    // TODO: this shouldn't be assert
+    assert(children_amount < (1 << 24), "nbtfinder doesn't support reading nbtfiles with lists with more than (2^24)-1 elements")
+
+    if (children_amount > (1 << 16) - 1) {
+      decoder.counters.big_lists += 1
+    }
 
     tag.value.list.start_index = u32(start_index)
     tag.value.list.count = i32(children_amount)
+    tag.value.list.children_type = list_tag_type
 
     return .ok
   } else {
@@ -678,6 +706,7 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
   // 1 tag every 8 bytes is a high estimate
 
   tags_amount_guess := len(nbt_bytes)/8
+  unnamed_tags_amount_guess := len(nbt_bytes)/32
 
 
   decoder : NBT_Decoder = {
@@ -691,7 +720,8 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
     ints = make([dynamic]i32, 0, 64, context.temp_allocator),
     longs = make([dynamic]i64, 0, 4096, context.temp_allocator),
 
-    tags = make([dynamic]NBT_Tag, 0, tags_amount_guess, context.temp_allocator)
+    tags = make([dynamic]NBT_Tag, 0, tags_amount_guess, context.temp_allocator),
+    unnamed_tags = make([dynamic]NBT_Value, 0, unnamed_tags_amount_guess, context.temp_allocator)
   }
 
   // DESC(dendo): recursivaly decode the tags
@@ -708,12 +738,14 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
   // DESC(dendo): calculate space and commit to permanent memory
 
   tags_count  := len(decoder.tags)
+  unnamed_tags_count := len(decoder.unnamed_tags)
   bytes_count := len(decoder.bytes)
   ints_count  := len(decoder.ints)
   longs_count := len(decoder.longs)
   strings_count := len(decoder.strings)
 
   tags_bytes := tags_count*size_of(decoder.tags[0])
+  unnamed_tags_bytes := unnamed_tags_count*size_of(decoder.unnamed_tags[0])
   bytes_bytes := bytes_count*size_of(decoder.bytes[0])
   ints_bytes := ints_count*size_of(decoder.ints[0])
   longs_bytes := longs_count*size_of(decoder.longs[0])
@@ -723,6 +755,7 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
 
   decoded_size += size_of(NBT_Decoded_Header)
   decoded_size += tags_bytes
+  decoded_size += unnamed_tags_bytes
   decoded_size += bytes_bytes
   decoded_size += ints_bytes
   decoded_size += longs_bytes
@@ -742,6 +775,10 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
     header.tags = slice.from_ptr(cast(^NBT_Tag)(&decoded_memory[offset]), tags_count)
     offset += tags_bytes
 
+    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.unnamed_tags), len = unnamed_tags_bytes)
+    header.unnamed_tags = slice.from_ptr(cast(^NBT_Value)(&decoded_memory[offset]), unnamed_tags_count)
+    offset += unnamed_tags_bytes
+
     runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.bytes), len = bytes_bytes)
     header.bytes = slice.from_ptr(cast(^i8)(&decoded_memory[offset]), bytes_count)
     offset += bytes_bytes
@@ -750,13 +787,11 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
     header.ints = slice.from_ptr(cast(^i32)(&decoded_memory[offset]), ints_count)
     offset += ints_bytes
 
-    // NOTE(dendo): because of the bounds check this will fail even thougth we never access the out of bounds decoded_memory[offset] pointer
-    if (longs_bytes > 0) {
-      runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.longs), len = longs_bytes)
-      header.longs = slice.from_ptr(cast(^i64)(&decoded_memory[offset]), longs_count)
-      offset += longs_bytes
-    }
+    runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.longs), len = longs_bytes)
+    header.longs = slice.from_ptr(cast(^i64)(&decoded_memory[offset]), longs_count)
+    offset += longs_bytes
 
+    // TODO(dendo): because of the bounds check this may fail even thougth we never access the out of bounds decoded_memory[offset] pointer
     runtime.mem_copy_non_overlapping(dst = &decoded_memory[offset], src = raw_data(decoder.strings), len = strings_bytes)
     header.strings = slice.from_ptr(cast(^u8)(&decoded_memory[offset]), strings_count)
     offset += strings_bytes
