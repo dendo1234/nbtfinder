@@ -602,7 +602,7 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
             childGap = 16,
             layoutDirection = .TopToBottom
         },
-        backgroundColor = { 250, 250, 255, 255 },
+        backgroundColor = { 255, 255, 255, 255 },
     }) {
       count := pool_count_active(claystate.treepool[:], claystate.current_frame - 1)
 

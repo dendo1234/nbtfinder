@@ -13,9 +13,8 @@ import clay "clay:clay-odin"
 import "../nbtfinder"
 import "../nbtfinder/ui"
 
-/*
-ui_fini   :: proc()
-*/
+COLOR_RANGE :: 255 // divisor to apply to the clay.Color values. 255 means values are 0 - 255
+NUM_CIRCLE_SEGMENTS :: 12 // resolution of circles
 
 SDL3_Clay_State :: struct {
   is_left_mouse_down: bool,
@@ -29,64 +28,14 @@ SDL3_Clay_State :: struct {
   last_update_time: u64,
   debug_mode: bool,
 
-  is_color_blending: bool,
-  blending_color: sdl3.FColor,
 
   claystate: ui.Clay_State,
 }
 
-COLOR_RANGE :: 255
 
 sdl3_clay_state : SDL3_Clay_State
 
-// NOTE: copied and modified from https://github.com/nicbarker/clay/blob/main/bindings/odin/README.md
-
-clay_init :: proc() -> (ok: bool) {
-  error_handler :: proc "c" (errorData: clay.ErrorData) {
-    context = runtime.default_context()
-    length := errorData.errorText.length
-    chars := errorData.errorText.chars
-    str := strings.string_from_ptr(chars, int(length))
-    fmt.eprintfln("Clay Error: %v", str)
-  }
-
-  min_memory_size := clay.MinMemorySize()
-  memory := make([^]u8, min_memory_size)
-  arena: clay.Arena = clay.CreateArenaWithCapacityAndMemory(uint(min_memory_size), memory)
-  clay.Initialize(arena, { f32(nbtfinder.window_specs.width), f32(nbtfinder.window_specs.height) }, { handler = error_handler })
-
-  // Example measure text function
-  measure_text :: proc "c" (
-    text: clay.StringSlice,
-    config: ^clay.TextElementConfig,
-    userData: rawptr,
-  ) -> clay.Dimensions {
-    // clay.TextElementConfig contains members such as fontId, fontSize, letterSpacing, etc..
-    // Note: clay.String->chars is not guaranteed to be null terminated
-
-    // TODO: this is not considering
-    // letterSpacing: u16,
-    // wrapMode:      TextWrapMode,
-    // textAlignment: TextAlignment,
-
-    font := sdl3_clay_state.fonts[config.fontId]
-    ttf.SetFontSize(font, f32(config.fontSize))
-
-    // ttf.SetLineSkip(font, i32(config.lineHeight))
-    // ttf.SetFontWrapAlignment(font, )
-
-    width, height: i32
-    ttf.GetStringSize(font, cstring(text.chars), uint(text.length), &width, &height);
-
-    return {
-      width = f32(width),
-      height = f32(height)
-    }
-  }
-
-  // Tell clay how to measure text
-  clay.SetMeasureTextFunction(measure_text, nil)
-
+clay_load_assets :: proc() -> bool {
   // DESC: Load images
 
   BYTE_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_byte.png")
@@ -140,6 +89,61 @@ clay_init :: proc() -> (ok: bool) {
     return false
   }
 
+  return true
+}
+
+// DESC: RENDERER(independent of nbtfinder):
+// NOTE: copied and modified from https://github.com/nicbarker/clay/blob/main/bindings/odin/README.md
+
+clay_init :: proc() -> (ok: bool) {
+  error_handler :: proc "c" (errorData: clay.ErrorData) {
+    context = runtime.default_context()
+    length := errorData.errorText.length
+    chars := errorData.errorText.chars
+    str := strings.string_from_ptr(chars, int(length))
+    fmt.eprintfln("Clay Error: %v", str)
+  }
+
+  min_memory_size := clay.MinMemorySize()
+  memory := make([^]u8, min_memory_size)
+  arena: clay.Arena = clay.CreateArenaWithCapacityAndMemory(uint(min_memory_size), memory)
+  clay.Initialize(arena, { f32(nbtfinder.window_specs.width), f32(nbtfinder.window_specs.height) }, { handler = error_handler })
+
+  // Example measure text function
+  measure_text :: proc "c" (
+    text: clay.StringSlice,
+    config: ^clay.TextElementConfig,
+    userData: rawptr,
+  ) -> clay.Dimensions {
+    // clay.TextElementConfig contains members such as fontId, fontSize, letterSpacing, etc..
+    // Note: clay.String->chars is not guaranteed to be null terminated
+
+    // TODO: this is not considering
+    // letterSpacing: u16,
+    // wrapMode:      TextWrapMode,
+    // textAlignment: TextAlignment,
+
+    font := sdl3_clay_state.fonts[config.fontId]
+    ttf.SetFontSize(font, f32(config.fontSize))
+
+    // ttf.SetLineSkip(font, i32(config.lineHeight))
+    // ttf.SetFontWrapAlignment(font, )
+
+    width, height: i32
+    ttf.GetStringSize(font, cstring(text.chars), uint(text.length), &width, &height);
+
+    return {
+      width = f32(width),
+      height = f32(height)
+    }
+  }
+
+  // Tell clay how to measure text
+  clay.SetMeasureTextFunction(measure_text, nil)
+
+  if (!clay_load_assets()) {
+    return false
+  }
 
   sdl3_clay_state.last_update_time = sdl3.GetTicksNS()
 
@@ -176,18 +180,15 @@ clay_process_event :: proc(event: ^sdl3.Event) {
     h := event.window.data2
     clay.SetLayoutDimensions({width = f32(w), height = f32(h)})
   }
-
 }
-
-// NOTE: copied and modified from https://github.com/nicbarker/clay/blob/main/renderers/SDL3/clay_renderer_SDL3.c
-
-NUM_CIRCLE_SEGMENTS :: 16
 
 alpha_blend :: proc(background, foreground : sdl3.FColor) -> sdl3.FColor {
   ret: sdl3.FColor
 
+  // A
   ret[3] = foreground[3] + background[3]*(1 - foreground[3])
 
+  // RGB
   ret[0] = (foreground[0]*foreground[3] + background[0]*background[3]*(1 - foreground[3]))/ret[3]
   ret[1] = (foreground[1]*foreground[3] + background[1]*background[3]*(1 - foreground[3]))/ret[3]
   ret[2] = (foreground[2]*foreground[3] + background[2]*background[3]*(1 - foreground[3]))/ret[3]
@@ -195,54 +196,50 @@ alpha_blend :: proc(background, foreground : sdl3.FColor) -> sdl3.FColor {
   return ret
 }
 
-clay_render_fill_rounded_rect :: proc(rect : sdl3.FRect, cornerRadius: f32, color: sdl3.FColor) {
-  indexCount, vertexCount : i32
+// NOTE: copied and modified from https://github.com/nicbarker/clay/blob/main/renderers/SDL3/clay_renderer_SDL3.c
 
-  minRadius := min(rect.w, rect.h) / 2.0
-  clampedRadius := min(cornerRadius, minRadius)
+draw_rectangle_rounded :: proc(rect : sdl3.FRect, cornerRadius: f32, color: sdl3.FColor) {
+  // WC = worst case
+  // NOTE(dendo): not sure about this. Should VLA be used or just allocate the worst case every time?
+  // probraly wont make a difference anyway
+  WC_VERTICIES_COUNT :: 4 + (4 * (NUM_CIRCLE_SEGMENTS * 2)) + 2*4
+  WC_INDICIES_COUNT :: 6 + (4 * (NUM_CIRCLE_SEGMENTS * 3)) + 6*4
+  #assert(WC_VERTICIES_COUNT*size_of(sdl3.Vertex) < 4096, "very big stack allocation")
+  #assert(WC_INDICIES_COUNT*size_of(i32) < 4096, "very big stack allocation")
 
-  numCircleSegments := max(NUM_CIRCLE_SEGMENTS, int(clampedRadius * 0.5))
+  indexCount, vertexCount : i32 = {}, {}
+  maxRadius := min(rect.w, rect.h) / 2.0
+  clampedRadius := min(cornerRadius, maxRadius)
+
+  // numCircleSegments per corner
+  numCircleSegments := min(NUM_CIRCLE_SEGMENTS, int(clampedRadius * 0.5))
 
   totalVertices := 4 + (4 * (numCircleSegments * 2)) + 2*4
   totalIndices := 6 + (4 * (numCircleSegments * 3)) + 6*4
 
-  assert(totalVertices < 4096, "very big stack allocation")
-  assert(totalIndices < 4096, "very big stack allocation")
-
-  vertices_bytes := intrinsics.alloca((totalVertices) * size_of(sdl3.Vertex), size_of(sdl3.Vertex))
-  vertices := ([^]sdl3.Vertex)(vertices_bytes)[:totalVertices]
-
-  indices_bytes := intrinsics.alloca((totalIndices) * size_of(i32), size_of(i32))
-  indices := ([^]i32)(indices_bytes)[:totalIndices]
+  vertices: [WC_VERTICIES_COUNT]sdl3.Vertex
+  indices: [WC_INDICIES_COUNT]i32
 
   //define center rectangle
-  vertices[vertexCount] = { {rect.x + clampedRadius, rect.y + clampedRadius}, color, {0, 0} } //0 center TL
-  vertexCount += 1
-  vertices[vertexCount] = { {rect.x + rect.w - clampedRadius, rect.y + clampedRadius}, color, {1, 0} } //1 center TR
-  vertexCount += 1
-  vertices[vertexCount] = { {rect.x + rect.w - clampedRadius, rect.y + rect.h - clampedRadius}, color, {1, 1} } //2 center BR
-  vertexCount += 1
-  vertices[vertexCount] = { {rect.x + clampedRadius, rect.y + rect.h - clampedRadius}, color, {0, 1} } //3 center BL
-  vertexCount += 1
+  vertices[vertexCount + 0] = { {rect.x + clampedRadius, rect.y + clampedRadius}, color, {0, 0} } //0 center TL
+  vertices[vertexCount + 1] = { {rect.x + rect.w - clampedRadius, rect.y + clampedRadius}, color, {1, 0} } //1 center TR
+  vertices[vertexCount + 2] = { {rect.x + rect.w - clampedRadius, rect.y + rect.h - clampedRadius}, color, {1, 1} } //2 center BR
+  vertices[vertexCount + 3] = { {rect.x + clampedRadius, rect.y + rect.h - clampedRadius}, color, {0, 1} } //3 center BL
+  vertexCount += 4
 
-  indices[indexCount] = 0
-  indexCount += 1
-  indices[indexCount] = 1
-  indexCount += 1
-  indices[indexCount] = 3
-  indexCount += 1
-  indices[indexCount] = 1
-  indexCount += 1
-  indices[indexCount] = 2
-  indexCount += 1
-  indices[indexCount] = 3
-  indexCount += 1
+  indices[indexCount + 0] = 0
+  indices[indexCount + 1] = 1
+  indices[indexCount + 2] = 3
+  indices[indexCount + 3] = 1
+  indices[indexCount + 4] = 2
+  indices[indexCount + 5] = 3
+  indexCount += 6
 
   //define rounded corners as triangle fans
   step := (math.PI/2) / f32(numCircleSegments)
   for i := 0; i < numCircleSegments; i += 1 {
-    angle2 := f32(i) + 1.0 * step
     angle1 := f32(i) * step
+    angle2 := f32(i + 1) * step
 
     for j: i32 = 0; j < 4; j += 1 {  // Iterate over four corners
       cx, cy, signX, signY: f32
@@ -271,129 +268,221 @@ clay_render_fill_rounded_rect :: proc(rect : sdl3.FRect, cornerRadius: f32, colo
           case: return
       }
 
-      vertices[vertexCount] = { {cx + sdl3.cosf(angle1) * clampedRadius * signX, cy + sdl3.sinf(angle1) * clampedRadius * signY}, color, {0, 0} }
-      vertexCount += 1
-      vertices[vertexCount] = { {cx + sdl3.cosf(angle2) * clampedRadius * signX, cy + sdl3.sinf(angle2) * clampedRadius * signY}, color, {0, 0} }
-      vertexCount += 1
+      vertices[vertexCount + 0] = { {cx + sdl3.cosf(angle1) * clampedRadius * signX, cy + sdl3.sinf(angle1) * clampedRadius * signY}, color, {0, 0} }
+      vertices[vertexCount + 1] = { {cx + sdl3.cosf(angle2) * clampedRadius * signX, cy + sdl3.sinf(angle2) * clampedRadius * signY}, color, {0, 0} }
+      vertexCount += 2
 
-      indices[indexCount] = j  // Connect to corresponding central rectangle vertex
-      indexCount += 1
-      indices[indexCount] = vertexCount - 2
-      indexCount += 1
-      indices[indexCount] = vertexCount - 1
-      indexCount += 1
+      indices[indexCount + 0] = j  // Connect to corresponding central rectangle vertex
+      indices[indexCount + 1] = vertexCount - 2
+      indices[indexCount + 2] = vertexCount - 1
+      indexCount += 3
     }
   }
 
   //Define edge rectangles
   // Top edge
-  vertices[vertexCount] = { {rect.x + clampedRadius, rect.y}, color, {0, 0} } //TL
-  vertexCount += 1
-  vertices[vertexCount] = { {rect.x + rect.w - clampedRadius, rect.y}, color, {1, 0} } //TR
-  vertexCount += 1
+  vertices[vertexCount + 0] = { {rect.x + clampedRadius, rect.y}, color, {0, 0} } //TL
+  vertices[vertexCount + 1] = { {rect.x + rect.w - clampedRadius, rect.y}, color, {1, 0} } //TR
+  vertexCount += 2
 
-  indices[indexCount] = 0
-  indexCount += 1
-  indices[indexCount] = vertexCount - 2 //TL
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //TR
-  indexCount += 1
-  indices[indexCount] = 1
-  indexCount += 1
-  indices[indexCount] = 0
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //TR
-  indexCount += 1
+  indices[indexCount + 0] = 0
+  indices[indexCount + 1] = vertexCount - 2 //TL
+  indices[indexCount + 2] = vertexCount - 1 //TR
+  indices[indexCount + 3] = 1
+  indices[indexCount + 4] = 0
+  indices[indexCount + 5] = vertexCount - 1 //TR
+  indexCount += 6
   // Right edge
-  vertices[vertexCount] = { {rect.x + rect.w, rect.y + clampedRadius}, color, {1, 0} } //RT
-  vertexCount += 1
-  vertices[vertexCount] = { {rect.x + rect.w, rect.y + rect.h - clampedRadius}, color, {1, 1} } //RB
-  vertexCount += 1
+  vertices[vertexCount + 0] = { {rect.x + rect.w, rect.y + clampedRadius}, color, {1, 0} } //RT
+  vertices[vertexCount + 1] = { {rect.x + rect.w, rect.y + rect.h - clampedRadius}, color, {1, 1} } //RB
+  vertexCount += 2
 
-  indices[indexCount] = 1
-  indexCount += 1
-  indices[indexCount] = vertexCount - 2 //RT
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //RB
-  indexCount += 1
-  indices[indexCount] = 2
-  indexCount += 1
-  indices[indexCount] = 1
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //RB
-  indexCount += 1
+  indices[indexCount + 0] = 1
+  indices[indexCount + 1] = vertexCount - 2 //RT
+  indices[indexCount + 2] = vertexCount - 1 //RB
+  indices[indexCount + 3] = 2
+  indices[indexCount + 4] = 1
+  indices[indexCount + 5] = vertexCount - 1 //RB
+  indexCount += 6
   // Bottom edge
-  vertices[vertexCount] = { {rect.x + rect.w - clampedRadius, rect.y + rect.h}, color, {1, 1} } //BR
-  vertexCount += 1
-  vertices[vertexCount] = { {rect.x + clampedRadius, rect.y + rect.h}, color, {0, 1} } //BL
-  vertexCount += 1
+  vertices[vertexCount + 0] = { {rect.x + rect.w - clampedRadius, rect.y + rect.h}, color, {1, 1} } //BR
+  vertices[vertexCount + 1] = { {rect.x + clampedRadius, rect.y + rect.h}, color, {0, 1} } //BL
+  vertexCount += 2
 
-  indices[indexCount] = 2
-  indexCount += 1
-  indices[indexCount] = vertexCount - 2 //BR
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //BL
-  indexCount += 1
-  indices[indexCount] = 3
-  indexCount += 1
-  indices[indexCount] = 2
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //BL
-  indexCount += 1
+  indices[indexCount + 0] = 2
+  indices[indexCount + 1] = vertexCount - 2 //BR
+  indices[indexCount + 2] = vertexCount - 1 //BL
+  indices[indexCount + 3] = 3
+  indices[indexCount + 4] = 2
+  indices[indexCount + 5] = vertexCount - 1 //BL
+  indexCount += 6
   // Left edge
-  vertices[vertexCount] = { {rect.x, rect.y + rect.h - clampedRadius}, color, {0, 1} } //LB
-  vertexCount += 1
-  vertices[vertexCount] = { {rect.x, rect.y + clampedRadius}, color, {0, 0} } //LT
-  vertexCount += 1
+  vertices[vertexCount + 0] = { {rect.x, rect.y + rect.h - clampedRadius}, color, {0, 1} } //LB
+  vertices[vertexCount + 1] = { {rect.x, rect.y + clampedRadius}, color, {0, 0} } //LT
+  vertexCount += 2
 
-  indices[indexCount] = 3
-  indexCount += 1
-  indices[indexCount] = vertexCount - 2 //LB
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //LT
-  indexCount += 1
-  indices[indexCount] = 0
-  indexCount += 1
-  indices[indexCount] = 3
-  indexCount += 1
-  indices[indexCount] = vertexCount - 1 //LT
-  indexCount += 1
+  indices[indexCount + 0] = 3
+  indices[indexCount + 1] = vertexCount - 2 //LB
+  indices[indexCount + 2] = vertexCount - 1 //LT
+  indices[indexCount + 3] = 0
+  indices[indexCount + 4] = 3
+  indices[indexCount + 5] = vertexCount - 1 //LT
+  indexCount += 6
 
   // Render everything
-  sdl3.RenderGeometry(platstate.renderer, nil, raw_data(vertices), vertexCount, raw_data(indices), indexCount)
+  sdl3.RenderGeometry(platstate.renderer, nil, raw_data(vertices[:]), vertexCount, raw_data(indices[:]), indexCount)
 }
 
-clay_render_arc :: proc (center: sdl3.FPoint, radius, start_angle, end_angle, thickness : f32) {
-  // color is assumed alreadly set
+draw_arc :: proc (center: sdl3.FPoint, radius, start_angle, end_angle, thickness : f32, color: sdl3.FColor) {
+  // WC = worst case
+  // NOTE(dendo): not sure about this. Should VLA be used or just allocate the worst case every time?
+  // probraly wont make a difference anyway
+  WC_VERTICIES_COUNT :: 2 + (NUM_CIRCLE_SEGMENTS * 2)
+  WC_INDICIES_COUNT :: 3 * (NUM_CIRCLE_SEGMENTS * 2)
+  #assert(WC_VERTICIES_COUNT*size_of(sdl3.Vertex) < 4096, "very big stack allocation")
+  #assert(WC_INDICIES_COUNT*size_of(i32) < 4096, "very big stack allocation")
 
   rad_start := start_angle * (math.PI / 180.0)
   rad_end := end_angle * (math.PI / 180.0)
 
-  num_circle_segments := max(NUM_CIRCLE_SEGMENTS, int(radius * 1.5)) //increase circle segments for larger circles, 1.5 is arbitrary.
-  assert(num_circle_segments <= 4096, "big circles, very big stack allocation")
+  assert(radius >= 0)
+  num_circle_segments := min(NUM_CIRCLE_SEGMENTS, i32(radius * 1.5)) //increase circle segments for larger circles, 1.5 is arbitrary.
+  if (num_circle_segments == 0) {
+    return
+  }
 
-  angle_step := (rad_end - rad_start) / f32(num_circle_segments)
-  thickness_step: f32 = 0.4 //arbitrary value to avoid overlapping lines. Changing THICKNESS_STEP or numCircleSegments might cause artifacts.
+  totalVertices := 2 + (num_circle_segments * 2)
+  totalIndices := 3 * (num_circle_segments * 2)
 
-  bytes := intrinsics.alloca((num_circle_segments+1) * size_of(sdl3.FRect), size_of(sdl3.FRect))
-  points := ([^]sdl3.FPoint)(bytes)[:num_circle_segments + 1]
+  vertices: [WC_VERTICIES_COUNT]sdl3.Vertex
+  indices: [WC_INDICIES_COUNT]i32
 
-  for t := thickness_step; t < thickness - thickness_step; t += thickness_step {
-    clamped_radius := max(radius - t, 1.0)
+  indexCount, vertexCount : i32 = {}, {}
 
-    for i := 0; i <= num_circle_segments; i += 1 {
-      angle := rad_start + f32(i) * angle_step
-      points[i] = {
-        sdl3.roundf(center.x + sdl3.cosf(angle) * clamped_radius),
-        sdl3.roundf(center.y + sdl3.sinf(angle) * clamped_radius)
-      }
+  arc_size := rad_end - rad_start
+
+  angle_step := arc_size/f32(num_circle_segments)
+  outer_radius := radius
+  inner_radius := radius - thickness
+
+  vertices[0] = { {center.x + sdl3.cosf(rad_start)*outer_radius, center.y + sdl3.sinf(rad_start)*outer_radius }, color, {0, 0}};
+  vertices[1] = { {center.x + sdl3.cosf(rad_start)*inner_radius, center.y + sdl3.sinf(rad_start)*inner_radius }, color, {0, 0}};
+  vertexCount += 2
+
+  for seg_index: i32 = 0; seg_index < num_circle_segments; seg_index += 1 {
+    // angle = rad_start + 0*angle_step is alreadly computed
+    angle := rad_start + f32(seg_index+1)*angle_step
+
+    //vertices[2*seg_index + 0]
+    //vertices[2*seg_index + 1] are alreadly computed
+    vertices[2*seg_index + 2] = { {center.x + sdl3.cosf(angle)*outer_radius, center.y + sdl3.sinf(angle)*outer_radius }, color, {0, 0}};
+    vertices[2*seg_index + 3] = { {center.x + sdl3.cosf(angle)*inner_radius, center.y + sdl3.sinf(angle)*inner_radius }, color, {0, 0}};
+
+    indices[6*seg_index + 0] = (2*seg_index) + 0
+    indices[6*seg_index + 1] = (2*seg_index) + 1
+    indices[6*seg_index + 2] = (2*seg_index) + 2
+
+    indices[6*seg_index + 3] = (2*seg_index) + 1
+    indices[6*seg_index + 4] = (2*seg_index) + 2
+    indices[6*seg_index + 5] = (2*seg_index) + 3
+
+    vertexCount += 2
+    indexCount += 6
+  }
+
+  sdl3.RenderGeometry(platstate.renderer, nil, raw_data(vertices[:]), vertexCount, raw_data(indices[:]), indexCount)
+}
+
+draw_border :: proc(rect : sdl3.FRect, cornerRadius: clay.CornerRadius, width: clay.BorderWidth, color: sdl3.FColor) {
+  WC_VERTICIES_COUNT :: 4 + (4 * (NUM_CIRCLE_SEGMENTS * 2)) + 2*4
+  WC_INDICIES_COUNT :: 6 + (4 * (NUM_CIRCLE_SEGMENTS * 3)) + 6*4
+  #assert(WC_VERTICIES_COUNT*size_of(sdl3.Vertex) < 4096, "very big stack allocation")
+  #assert(WC_INDICIES_COUNT*size_of(i32) < 4096, "very big stack allocation")
+  
+  indexCount, vertexCount : i32 = {}, {}
+
+  maxRadius := min(rect.w, rect.h) / 2.0
+  clampedRadii : clay.CornerRadius = {
+    topLeft = min(cornerRadius.topLeft, maxRadius),
+    topRight = min(cornerRadius.topRight, maxRadius),
+    bottomLeft = min(cornerRadius.bottomLeft, maxRadius),
+    bottomRight = min(cornerRadius.bottomRight, maxRadius)
+  };
+
+  // edges
+  {
+    rects: [4]sdl3.FRect
+    rect_count: i32 = 0
+
+    if (width.left > 0) {
+      starting_y := rect.y + clampedRadii.topLeft
+      length := rect.h - clampedRadii.topLeft - clampedRadii.bottomLeft
+      rects[rect_count] = { rect.x, starting_y, f32(width.left), length }
+      rect_count += 1
+
     }
-    sdl3.RenderLines(platstate.renderer, raw_data(points[:]), i32(num_circle_segments + 1));
+    if (width.right > 0) {
+      starting_x := rect.x + rect.w - f32(width.right)
+      starting_y := rect.y + clampedRadii.topRight
+      length := rect.h - clampedRadii.topRight - clampedRadii.bottomRight
+      rects[rect_count] = { starting_x, starting_y, f32(width.right), length };
+      rect_count += 1
+    }
+    if (width.top > 0) {
+      starting_x := rect.x + clampedRadii.topLeft
+      length := rect.w - clampedRadii.topLeft - clampedRadii.topRight
+      rects[rect_count] = { starting_x, rect.y, length, f32(width.top) }
+      rect_count += 1
+    }
+    if (width.bottom > 0) {
+      starting_x := rect.x + clampedRadii.bottomLeft
+      starting_y := rect.y + rect.h - f32(width.bottom)
+      length := rect.w - clampedRadii.bottomLeft - clampedRadii.bottomRight
+      rects[rect_count] = { starting_x, starting_y, length, f32(width.bottom) }
+      rect_count += 1
+    }
+
+    sdl3.RenderFillRects(platstate.renderer, raw_data(rects[:]), rect_count)
+  }
+
+  // corners
+  {
+    // NOTE(dendo): this 4 calls are doing basicaly the same thing (if the clampedRadii is the same),
+    // the only difference (in relative coordinates) is the sign of the X and Y coordinates on the vertices.
+    // maybe there is some optimazation potencial here
+    if (cornerRadius.topLeft > 0) {
+      centerX := rect.x + clampedRadii.topLeft
+      centerY := rect.y + clampedRadii.topLeft
+      draw_arc({centerX, centerY}, clampedRadii.topLeft,
+            180.0, 270.0, f32(width.top), color)
+    }
+    if (cornerRadius.topRight > 0) {
+      centerX := rect.x + rect.w - clampedRadii.topRight
+      centerY := rect.y + clampedRadii.topRight
+      draw_arc({centerX, centerY}, clampedRadii.topRight,
+          270.0, 360.0, f32(width.top), color)
+    }
+    if (cornerRadius.bottomLeft > 0) {
+      centerX := rect.x + clampedRadii.bottomLeft
+      centerY := rect.y + rect.h - clampedRadii.bottomLeft
+      draw_arc({centerX, centerY}, clampedRadii.bottomLeft,
+          90.0, 180.0, f32(width.bottom), color)
+    }
+    if (cornerRadius.bottomRight > 0) {
+      centerX := rect.x + rect.w - clampedRadii.bottomRight
+      centerY := rect.y + rect.h - clampedRadii.bottomRight
+      draw_arc({centerX, centerY}, clampedRadii.bottomRight,
+          0.0, 90.0, f32(width.bottom), color)
+    }
   }
 }
 
+
 clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^clay.ClayArray(clay.RenderCommand)) {
   sdl3.SetRenderDrawBlendMode(platstate.renderer, { .BLEND })
+
+  is_color_blending: bool = false
+	overlay_colors := make([dynamic]sdl3.FColor, context.temp_allocator)
 
   for i in 0..<i32(render_commands.length) {
       rcmd := clay.RenderCommandArray_Get(render_commands, i)
@@ -407,13 +496,14 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
         cc := rectangle.backgroundColor
         color: sdl3.FColor = { cc[0]/COLOR_RANGE, cc[1]/COLOR_RANGE, cc[2]/COLOR_RANGE, cc[3]/COLOR_RANGE }
 
-        if sdl3_clay_state.is_color_blending {
-          color = alpha_blend(color, sdl3_clay_state.blending_color)
+        if is_color_blending {
+          overlay := overlay_colors[len(overlay_colors) - 1 ]
+          color = alpha_blend(color, overlay)
         }
         sdl3.SetRenderDrawColorFloat(renderer, color[0], color[1], color[2], color[3])
 
         if rectangle.cornerRadius.topLeft > 0 {
-          clay_render_fill_rounded_rect(rect, rectangle.cornerRadius.topLeft, color)
+          draw_rectangle_rounded(rect, rectangle.cornerRadius.topLeft, color)
         } else {
           sdl3.RenderFillRect(renderer, &rect)
         }
@@ -423,70 +513,13 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
         cc := border.color
         color: sdl3.FColor = { cc[0]/COLOR_RANGE, cc[1]/COLOR_RANGE, cc[2]/COLOR_RANGE, cc[3]/COLOR_RANGE }
 
-        if sdl3_clay_state.is_color_blending {
-          color = alpha_blend(color, sdl3_clay_state.blending_color)
+        if is_color_blending {
+          overlay := overlay_colors[len(overlay_colors) - 1 ]
+          color = alpha_blend(color, overlay)
         }
         sdl3.SetRenderDrawColorFloat(renderer, color[0], color[1], color[2], color[3])
 
-        minRadius := min(rect.w, rect.h) / 2.0
-        clampedRadii : clay.CornerRadius = {
-          topLeft = min(border.cornerRadius.topLeft, minRadius),
-          topRight = min(border.cornerRadius.topRight, minRadius),
-          bottomLeft = min(border.cornerRadius.bottomLeft, minRadius),
-          bottomRight = min(border.cornerRadius.bottomRight, minRadius)
-        };
-        //edges
-        if (border.width.left > 0) {
-          starting_y := rect.y + clampedRadii.topLeft
-          length := rect.h - clampedRadii.topLeft - clampedRadii.bottomLeft
-          line : sdl3.FRect= { rect.x - 1, starting_y, f32(border.width.left), length }
-          sdl3.RenderFillRect(platstate.renderer, &line)
-        }
-        if (border.width.right > 0) {
-          starting_x := rect.x + rect.w - f32(border.width.right) + 1
-          starting_y := rect.y + clampedRadii.topRight
-          length := rect.h - clampedRadii.topRight - clampedRadii.bottomRight
-          line : sdl3.FRect = { starting_x, starting_y, f32(border.width.right), length };
-          sdl3.RenderFillRect(platstate.renderer, &line)
-        }
-        if (border.width.top > 0) {
-          starting_x := rect.x + clampedRadii.topLeft
-          length := rect.w - clampedRadii.topLeft - clampedRadii.topRight
-          line : sdl3.FRect = { starting_x, rect.y - 1, length, f32(border.width.top) }
-          sdl3.RenderFillRect(platstate.renderer, &line)
-        }
-        if (border.width.bottom > 0) {
-          starting_x := rect.x + clampedRadii.bottomLeft
-          starting_y := rect.y + rect.h - f32(border.width.bottom) + 1
-          length := rect.w - clampedRadii.bottomLeft - clampedRadii.bottomRight
-          line : sdl3.FRect = { starting_x, starting_y, length, f32(border.width.bottom) }
-          sdl3.RenderFillRect(platstate.renderer, &line)
-        }
-        //corners
-        if (border.cornerRadius.topLeft > 0) {
-          centerX := rect.x + clampedRadii.topLeft -1
-          centerY := rect.y + clampedRadii.topLeft - 1
-          clay_render_arc({centerX, centerY}, clampedRadii.topLeft,
-                180.0, 270.0, f32(border.width.top))
-        }
-        if (border.cornerRadius.topRight > 0) {
-          centerX := rect.x + rect.w - clampedRadii.topRight
-          centerY := rect.y + clampedRadii.topRight - 1
-          clay_render_arc({centerX, centerY}, clampedRadii.topRight,
-              270.0, 360.0, f32(border.width.top))
-        }
-        if (border.cornerRadius.bottomLeft > 0) {
-          centerX := rect.x + clampedRadii.bottomLeft -1
-          centerY := rect.y + rect.h - clampedRadii.bottomLeft
-          clay_render_arc({centerX, centerY}, clampedRadii.bottomLeft,
-              90.0, 180.0, f32(border.width.bottom))
-        }
-        if (border.cornerRadius.bottomRight > 0) {
-          centerX := rect.x + rect.w - clampedRadii.bottomRight
-          centerY := rect.y + rect.h - clampedRadii.bottomRight
-          clay_render_arc({centerX, centerY}, clampedRadii.bottomRight,
-              0.0, 90.0, f32(border.width.bottom))
-        }
+        draw_border(rect, border.cornerRadius, border.width, color)
 
       case .Text:
         config := &rcmd.renderData.text
@@ -496,8 +529,9 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
 
         cc := config.textColor
         color: sdl3.FColor = { cc[0]/COLOR_RANGE, cc[1]/COLOR_RANGE, cc[2]/COLOR_RANGE, cc[3]/COLOR_RANGE }
-        if sdl3_clay_state.is_color_blending {
-          color = alpha_blend(color, sdl3_clay_state.blending_color)
+        if is_color_blending {
+          overlay := overlay_colors[len(overlay_colors) - 1 ]
+          color = alpha_blend(color, overlay)
         }
 
         text := ttf.CreateText(platstate.text_engine, font, cstring(config.stringContents.chars), uint(config.stringContents.length))
@@ -509,9 +543,10 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
       case .Image:
         texture := (^sdl3.Texture)(rcmd.renderData.image.imageData)
         sdl3.RenderTexture(platstate.renderer, texture, nil, &rect)
-        if sdl3_clay_state.is_color_blending {
-          colors := sdl3_clay_state.blending_color
-          sdl3.SetRenderDrawColorFloat(platstate.renderer, colors[0], colors[1], colors[2], colors[3])
+        if is_color_blending {
+          // TODO: this is probraly wrong way to do overlay
+          overlay := overlay_colors[len(overlay_colors) - 1]
+          sdl3.SetRenderDrawColorFloat(platstate.renderer, overlay[0], overlay[1], overlay[2], overlay[3])
           sdl3.RenderFillRect(renderer, &rect)
         }
       case .ScissorStart:
@@ -528,18 +563,19 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
         sdl3.SetRenderClipRect(platstate.renderer, nil)
 
       case .OverlayColorStart:
-        assert(sdl3_clay_state.is_color_blending == false, "renderer don't support stacking multiple color blends")
         clay_color := rcmd.renderData.overlayColor.color
-        sdl3_clay_state.blending_color = {
+        overlay: sdl3.FColor = {
           clay_color[0]/COLOR_RANGE,
           clay_color[1]/COLOR_RANGE,
           clay_color[2]/COLOR_RANGE,
           clay_color[3]/COLOR_RANGE
         }
-        sdl3_clay_state.is_color_blending = true
+        append(&overlay_colors, overlay)
+        is_color_blending = true
 
       case .OverlayColorEnd:
-        sdl3_clay_state.is_color_blending = false
+        pop(&overlay_colors)
+        is_color_blending = false
 
       case:
         assert(false, "Clay render command not implemented")
