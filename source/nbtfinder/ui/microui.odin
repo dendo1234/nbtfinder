@@ -5,6 +5,8 @@ import "core:fmt"
 import "../"
 import mu "vendor:microui"
 
+// NOTE(dendo): retired
+/*
 
 draw_tag :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, tag : ^nbtfinder.NBT_Tag) {
 
@@ -119,4 +121,5 @@ microui_draw_commands :: proc(ctx: ^mu.Context, appstate : ^nbtfinder.AppState, 
   mu.end(ctx)
 }
 
+*/
 

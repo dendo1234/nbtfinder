@@ -584,7 +584,7 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
   }
 }
 
-clay_render :: proc(appstate: ^nbtfinder.AppState) {
+clay_render :: proc(appstate: ^nbtfinder.AppState) -> (keep_updating: bool){
   renderer := platstate.renderer
 
   temp_time := sdl3.GetTicksNS()
@@ -604,6 +604,8 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) {
 
   clay_render_draw_commands(platstate.renderer, &render_commands)
 	sdl3.RenderPresent(platstate.renderer)
+
+  return true
 }
 
 clay_fini :: proc() {

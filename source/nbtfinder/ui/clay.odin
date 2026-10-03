@@ -682,9 +682,58 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
     }) {
       count := pool_count_active(claystate.treepool[:], claystate.current_frame - 1)
 
-      text := fmt.tprintf("Open Treenodes last frame: %v", count)
+      if clay.UI(clay.ID("SelectedFiles"))({
+        layout = {
+          layoutDirection = .TopToBottom
+        }
+      }) {
+        for file_index := 0; file_index < len(appstate.file_store.staged_files); file_index += 1 {
+          assert(file_index < (1 << 32) - 1)
+          if clay.UI(clay.ID_LOCAL("File", u32(file_index)))({
+            layout = {
+              padding = { 4, 4, 2, 2 },
+              childGap = 4,
+              layoutDirection = .LeftToRight
+            },
+            cornerRadius = clay.CornerRadiusAll(2),
+            backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
+            transition = {
+              handler = DelayedEaseOut,
+              duration = 0.2,
+              // A "flag" enum is used to specify which properties to transition, use a bitwise OR (|) to construct the flags.
+              properties = { .X, .OverlayColor } | clay.TransitionPropertyBoundingBox,
+              interactionHandling = .AllowInteractionsWhileTransitioningPosition,
+              enter = { 
+                setInitialState = EnterExitSlide,
+                trigger = .TriggerOnFirstParentFrame
+              },
+              exit = { 
+                setFinalState = EnterExitSlide,
+                //trigger = .TriggerWhenParentExits
+              },
+            }
+          }) {
+            if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
+              file := appstate.file_store.staged_files[file_index]
 
-      clay_nbt_browser(appstate.header^)
+              nbtfinder.open_file(appstate, file_index)
+            }
+
+            filename := appstate.file_store.staged_files[file_index].filename
+
+            assert(len(filename) > 1)
+
+            clay.Text(filename, default_text)
+          }
+        }
+      }
+
+
+      /*
+      if (appstate.header != nil) {
+        clay_nbt_browser(appstate.header^)
+      }
+      */
 
       if clay.UI()({
         layout = {
@@ -698,6 +747,7 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
       }
       // DESC: STATUS BAR
       if clay.UI()({}) {
+        text := fmt.tprintf("Open Treenodes last frame: %v", count)
         clay.Text(text, default_text)
       }
     }

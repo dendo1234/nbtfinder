@@ -14,6 +14,7 @@ if not "%1"=="uprof" (
 set "compiler_args="
 set "compiler_args=%compiler_args% -collection:clay=..\external\clay\bindings\odin"
 set "compiler_args=%compiler_args% -define:NBTFINDER_UI=clay"
+REM set "compiler_args=%compiler_args% -vet"
 
 if %has_uprof% EQU 1 (
   set uprof_args=-define:HAS_UPROF=true -collection:uprof=%uprof_path% -extra-linker-flags:"/nodefaultlib:libcmt /defaultlib:ucrt.lib shell32.lib"

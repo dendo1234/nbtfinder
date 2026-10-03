@@ -29,12 +29,12 @@ NBTFINDER_UI :: #config(NBTFINDER_UI, "microui")
 
 when NBTFINDER_UI == "microui" {
   ui_init   : proc() -> (ok: bool)                : microui_init
-  ui_render : proc(appstate: ^nbtfinder.AppState) : microui_render
+  ui_render : proc(appstate: ^nbtfinder.AppState) -> (keep_updating: bool) : microui_render
   ui_event  : proc(event: ^sdl3.Event)            : microui_process_event
   ui_fini   : proc()                              : microui_fini
 } else when NBTFINDER_UI == "clay" {
   ui_init   : proc() -> (ok: bool)                : clay_init
-  ui_render : proc(appstate: ^nbtfinder.AppState) : clay_render
+  ui_render : proc(appstate: ^nbtfinder.AppState) -> (keep_updating: bool) : clay_render
   ui_event  : proc(event: ^sdl3.Event)            : clay_process_event
   ui_fini   : proc()                              : clay_fini
 } else {
@@ -60,6 +60,15 @@ main :: proc () {
     AppQuit
   )
   os.exit(int(ret))
+}
+
+DialogFileCallback :: proc "c" (userdata: rawptr, filelist: [^]cstring, filter: i32) {
+  appstate: ^nbtfinder.AppState = (^nbtfinder.AppState)(userdata)
+
+  context = runtime.default_context()
+
+
+  nbtfinder.stage_files(appstate, filelist)
 }
 
 AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.AppResult {
@@ -141,7 +150,9 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
       return sdl3.AppResult.FAILURE
     }
 
-    nbtfinder.Mca_read(memory, "r.0.0.mca")
+    
+    //sdl3.ShowOpenFolderDialog(DialogFileCallback, platstate, platstate.window, nil, false)
+
   }
 
 
@@ -154,7 +165,13 @@ AppIterate :: proc "c" (appstate: rawptr) -> sdl3.AppResult {
   context = runtime.default_context()
 
   {
-    ui_render(cast(^nbtfinder.AppState)appstate)
+    keep_updating := ui_render(cast(^nbtfinder.AppState)appstate)
+
+    if keep_updating {
+      sdl3.SetHint(sdl3.HINT_MAIN_CALLBACK_RATE, "60")
+    } else {
+      sdl3.SetHint(sdl3.HINT_MAIN_CALLBACK_RATE, "waitevent")
+    }
   }
 
   free_all(context.temp_allocator)
@@ -173,6 +190,19 @@ AppEvent :: proc "c" (appstate: rawptr, event: ^sdl3.Event) -> sdl3.AppResult {
 
   ui_event(event)
   #partial switch event.type {
+  case .KEY_DOWN:
+    key := event.key
+    if key.key == sdl3.K_O && (key.mod & { .LCTRL, .RCTRL } != {}) {
+      sdl3.ShowOpenFileDialog(
+        DialogFileCallback,
+        (^nbtfinder.AppState)(appstate),
+        platstate.window,
+        nil,
+        0,
+        nil,
+        true,
+      )
+    }
   case .QUIT:
     return sdl3.AppResult.SUCCESS
   }

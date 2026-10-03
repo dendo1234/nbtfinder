@@ -37,7 +37,7 @@ MCA_File :: struct {
 }
 
 
-Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_loc : Mca_Location) {
+Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_loc : Mca_Location) -> ^NBT_Decoded_Header {
   offset, sector_lenght := McaLocation_getLenghtAndOffset(mca_loc)
 
   byte_offset : i64 = i64(offset)*mca_sector_size
@@ -49,7 +49,7 @@ Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_l
     n, err := os.read_at(file, chunk_data, byte_offset)
     if err != os.ERROR_NONE {
       fmt.printfln("Error reading chunk data")
-      return
+      return nil
     }
     assert(n != 0 && n%mca_sector_size == 0, "currupt mca file")
   }
@@ -65,30 +65,19 @@ Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_l
 
     if err != nil {
       fmt.printfln("\nError: %v", err)
-      return
+      return nil
     }
   }
 
   nbt_bytes := bytes.buffer_to_bytes(&nbt_buffer)
 
-  fmt.println("Scalar")
-  nbt_decode_set_procedures(.Scalar, true)
+  timing: Timing_Info
+  header: ^NBT_Decoded_Header
+  header, timing = nbt_decode(nbt_bytes)
 
-  for i := 0; i < 5; i += 1 {
-    timing : Timing_Info
-    appstate.header, timing = nbt_decode(nbt_bytes)
+  fmt.println(timing)
 
-    fmt.println(timing)
-  }
-
-  fmt.println(appstate.compute_method)
-  nbt_decode_set_procedures(appstate.compute_method, true)
-  for i := 0; i < 5; i += 1 {
-    timing : Timing_Info
-    appstate.header, timing = nbt_decode(nbt_bytes)
-
-    fmt.println(timing)
-  }
+  return header
 }
 
 Mca_read :: proc(appstate : ^AppState, filename : string) {

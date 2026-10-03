@@ -8,6 +8,8 @@ import "core:fmt"
 import "vendor:sdl3"
 import mu "vendor:microui"
 
+// NOTE(dendo): retired
+/*
 
 mustate :: struct {
   ctx : mu.Context,
@@ -113,7 +115,7 @@ microui_render_draw_commands :: proc "contextless" (mu_ctx : ^mu.Context) {
 	sdl3.RenderPresent(platstate.renderer)
 }
 
-microui_render :: proc (appstate : ^nbtfinder.AppState) {
+microui_render :: proc (appstate : ^nbtfinder.AppState) -> (keep_updating: bool) {
   ctx := &state.ctx
 
   viewport_rect := &sdl3.Rect{}
@@ -126,10 +128,12 @@ microui_render :: proc (appstate : ^nbtfinder.AppState) {
   ui.microui_draw_commands(ctx, appstate, mu_rect)
   microui_render_draw_commands(ctx)
 
+  return false
 }
 
 microui_fini :: proc () {
   sdl3.DestroyTexture(state.atlas_texture)
 
 }
+*/
 

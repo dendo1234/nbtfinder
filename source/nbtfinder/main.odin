@@ -24,7 +24,8 @@ Compute_Methods :: enum {
 
 AppState :: struct {
   compute_method: Compute_Methods,
-  header: ^NBT_Decoded_Header
+
+  file_store: File_Store
 }
 
 CPU_Feature :: enum {
@@ -36,6 +37,8 @@ CPU_Feature :: enum {
 CPU_Features :: bit_set[CPU_Feature]
 
 init :: proc(appstate : ^AppState, cpu_features : CPU_Features) -> (ok : bool) {
+
+  init_file_store(appstate)
 
   best := run_tests(cpu_features)
 
