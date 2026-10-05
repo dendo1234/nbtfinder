@@ -40,18 +40,18 @@ sdl3_clay_state : SDL3_Clay_State
 clay_load_assets :: proc() -> bool {
   // DESC: Load images
 
-  BYTE_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_byte.png")
-  SHORT_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_short.png")
-  INT_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_int.png")
-  LONG_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_long.png")
-  FLOAT_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_float.png")
-  DOUBLE_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_double.png")
-  BYTE_ARRAY_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_byte-array.png")
-  STRING_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_string.png")
-  LIST_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_list.png")
-  COMPOUND_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_compound.png")
-  INT_ARRAY_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_int-array.png")
-  LONG_ARRAY_TAG_BYTES :: #load("../../data/nbt icons/NbtSprite_long-array.png")
+  BYTE_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_byte.png")
+  SHORT_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_short.png")
+  INT_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_int.png")
+  LONG_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_long.png")
+  FLOAT_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_float.png")
+  DOUBLE_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_double.png")
+  BYTE_ARRAY_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_byte-array.png")
+  STRING_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_string.png")
+  LIST_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_list.png")
+  COMPOUND_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_compound.png")
+  INT_ARRAY_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_int-array.png")
+  LONG_ARRAY_TAG_BYTES :: #load("../../data/static/nbt icons/NbtSprite_long-array.png")
 
   ICONS : [13][]u8 : {
     BYTE_TAG_BYTES, // TODO: this is a place holder
@@ -81,7 +81,7 @@ clay_load_assets :: proc() -> bool {
   // NOTE(dendo): I found it pretty weird that the executable size grew way more than the 977 KiB of the dejavu file.
   // As it turns out, this fenomenom only happens in debug builds. So it isn't that intersing.
   // It's probraly the sdl3.IOFromMem call that is causing it
-  DEJA_VU_SANS_BYTES :: #load("../../data/DejaVuSans.ttf")
+  DEJA_VU_SANS_BYTES :: #load("../../data/static/DejaVuSans.ttf")
 
   dejavu_stream := sdl3.IOFromMem(raw_data(DEJA_VU_SANS_BYTES), len(DEJA_VU_SANS_BYTES))
   assert(dejavu_stream != nil)
