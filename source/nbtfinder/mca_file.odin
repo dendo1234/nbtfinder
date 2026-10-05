@@ -1,5 +1,6 @@
 package nbtfinder
 
+import "base:runtime"
 import "core:bytes"
 import "core:compress/zlib"
 import "core:fmt"
@@ -19,25 +20,43 @@ PosChunk :: distinct Pos2D
 PosBlock :: distinct Pos2D
 PosRegion :: distinct Pos2D
 
-Mca_Location :: distinct u32be
+MCA_Location :: distinct u32be
 
-McaLocation_getLenghtAndOffset :: proc(mca_location_entry: Mca_Location) -> (sector_offset: u32, sector_lenght: u8) {
+McaLocation_getLenghtAndOffset :: proc(mca_location_entry: MCA_Location) -> (sector_offset: u32, sector_lenght: u8) {
   sector_offset = u32(mca_location_entry >> 8)
   sector_lenght = u8(mca_location_entry & 0xff)
   return
 }
 
+mca_max_chunk_lenght :: 255
+mca_max_sector_count :: mca_max_chunk_lenght * mca_chunk_count
 
-MCA_File :: struct {
-  header_location : [mca_chunk_count]Mca_Location,
-  timestamp_header : [mca_chunk_count]u32,
+// NOTE(dendo): Should we cast the mca file on disk to a struct or slice it up with pointers?
+// for now I've went with the slice aprouch,
 
-  sectors : [][mca_sector_size]u8
-
+MCA_File_Header :: struct {
+  raw_data: []u8,
+  location: []MCA_Location,
+  timestamp_header: []u32,
+ 
+  sectors: [][mca_sector_size]u8
 }
 
+/*
+MCA_File :: struct {
+  header_location : [mca_chunk_count]MCA_Location,
+  timestamp_header : [mca_chunk_count]u32,
 
-Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_loc : Mca_Location) -> ^NBT_Decoded_Header {
+  // HACK(dendo): odin doesn't have flexible array member feature. So this is an workaround.
+  // Because of this, this structure is not meant to be instatiated, only casted.
+  // If instatiated, it would have around 1 GiB!
+  // also, odin's automatic bounds checks are useless here.
+  sectors : [mca_max_sector_count][mca_sector_size]u8
+}
+*/
+
+
+Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_loc : MCA_Location) -> ^NBT_Decoded_Header {
   offset, sector_lenght := McaLocation_getLenghtAndOffset(mca_loc)
 
   byte_offset : i64 = i64(offset)*mca_sector_size
@@ -80,37 +99,34 @@ Mca_readAndDecompressChunk :: proc(appstate : ^AppState , file : ^os.File, mca_l
   return header
 }
 
-Mca_read :: proc(appstate : ^AppState, filename : string) {
-  file, err := os.open(filename)
+MCA_read_Error :: union {
+  os.Error
+}
+
+MCA_read :: proc(appstate : ^AppState, filename : string) -> (handler: MCA_File_Header, err: MCA_read_Error)  {
+  file := os.open(filename) or_return
   defer os.close(file)
-  if err != os.ERROR_NONE {
-    fmt.printfln("Error opening file %s", err)
-    return
-  }
 
-  sector : [mca_sector_size]u8
+  file_size := os.file_size(file) or_return
+  memory := runtime.mem_alloc(int(file_size), alignment = 4096, allocator = context.allocator) or_return
+  bytes_read := os.read_full(file, memory) or_return
+  assert(bytes_read == int(file_size))
 
-  mca : MCA_File
-  n : int
+  mca_header: MCA_File_Header
 
-  n, err = os.read(file, slice.to_bytes(mca.header_location[:]))
-  if err != os.ERROR_NONE {
-    fmt.printfln("Error reading 1st header on %s. Error: %s", filename, err)
-    return
-  }
+  mca_header.raw_data = memory
+  mca_header.location = slice.reinterpret([]MCA_Location, memory[0:4096])
+  mca_header.timestamp_header = slice.reinterpret([]u32, memory[4096:8192])
+  mca_header.sectors = slice.reinterpret([][mca_sector_size]u8,memory[8192:])
 
-  n, err = os.read(file, slice.to_bytes(mca.timestamp_header[:]))
-  if err != os.ERROR_NONE {
-    fmt.printfln("Error reading 2st header on %s. Error: %s", filename, err)
-    return
-  }
-
-  for mca_loc in mca.header_location {
+  for mca_loc in mca_header.location {
     if (mca_loc != 0) {
       Mca_readAndDecompressChunk(appstate, file, mca_loc)
 
       break
     }
   }
+
+  return mca_header, MCA_read_Error{}
 }
 

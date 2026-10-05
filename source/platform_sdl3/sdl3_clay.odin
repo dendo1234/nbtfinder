@@ -27,6 +27,7 @@ SDL3_Clay_State :: struct {
   fonts: [4]^ttf.Font,
 
   last_update_time: u64,
+  update_till: u64,
   debug_mode: bool,
 
 
@@ -96,14 +97,15 @@ clay_load_assets :: proc() -> bool {
 // DESC: RENDERER(independent of nbtfinder):
 // NOTE: copied and modified from https://github.com/nicbarker/clay/blob/main/bindings/odin/README.md
 
+error_handler :: proc "c" (errorData: clay.ErrorData) {
+  context = runtime.default_context()
+  length := errorData.errorText.length
+  chars := errorData.errorText.chars
+  str := strings.string_from_ptr(chars, int(length))
+  fmt.eprintfln("Clay Error: %v", str)
+}
+
 clay_init :: proc() -> (ok: bool) {
-  error_handler :: proc "c" (errorData: clay.ErrorData) {
-    context = runtime.default_context()
-    length := errorData.errorText.length
-    chars := errorData.errorText.chars
-    str := strings.string_from_ptr(chars, int(length))
-    fmt.eprintfln("Clay Error: %v", str)
-  }
 
   min_memory_size := clay.MinMemorySize()
   memory := make([^]u8, min_memory_size)
@@ -605,7 +607,12 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) -> (keep_updating: bool){
   clay_render_draw_commands(platstate.renderer, &render_commands)
 	sdl3.RenderPresent(platstate.renderer)
 
-  return true
+  current_time := sdl3.GetTicksNS()
+  if clay.GetPointerState().state == .PressedThisFrame {
+    sdl3_clay_state.update_till = current_time + 2e9 // 2 seconds
+  }
+  
+  return sdl3_clay_state.update_till > current_time
 }
 
 clay_fini :: proc() {

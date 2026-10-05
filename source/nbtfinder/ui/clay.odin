@@ -4,22 +4,18 @@ package ui
 import "base:runtime"
 import "../"
 import "core:fmt"
+import "core:time"
 import clay "clay:clay-odin"
-
-// Define some colors.
-COLOR_LIGHT :: clay.Color{224, 215, 210, 255}
-COLOR_RED :: clay.Color{168, 66, 28, 255}
-COLOR_ORANGE :: clay.Color{225, 138, 50, 255}
-COLOR_BLACK :: clay.Color{0, 0, 0, 255}
-COLOR_LIGHT_GREY :: clay.Color{200, 200, 200, 255}
-COLOR_WHITE :: clay.Color{255, 255, 255, 255}
 
 Pool_Item :: struct {
   id : u32,
   last_updated : i32
 }
 
-TREENODE_IDENT :: 16
+ScrollBar_State :: struct {
+  grab_pos: f32,
+  start_pos: f32
+}
 
 Clay_State :: struct {
   print_types: bool,
@@ -60,12 +56,44 @@ Clay_State :: struct {
   time_to_delay: f32
 }
 
-ScrollBar_State :: struct {
-  grab_pos: f32,
-  start_pos: f32
+claystate : ^Clay_State
+
+// Define some colors.
+COLOR_LIGHT :: clay.Color{224, 215, 210, 255}
+COLOR_RED :: clay.Color{168, 66, 28, 255}
+COLOR_ORANGE :: clay.Color{225, 138, 50, 255}
+COLOR_BLACK :: clay.Color{0, 0, 0, 255}
+COLOR_LIGHT_GREY :: clay.Color{200, 200, 200, 255}
+COLOR_WHITE :: clay.Color{255, 255, 255, 255}
+
+TREENODE_IDENT :: 16
+
+LAYOUT_TREE_BODY : clay.LayoutConfig : {
+  padding = { TREENODE_IDENT, 0, 0, 0 },
+  layoutDirection = .TopToBottom,
+  childGap = 4,
 }
 
-claystate : ^Clay_State
+icon_config: clay.ElementDeclaration = {
+  layout = {
+    sizing = { width = clay.SizingFixed(16), height = clay.SizingFixed(16)},
+  }
+}
+
+tag_config: clay.ElementDeclaration = {
+  layout = {
+    padding = clay.PaddingAll(2),
+    childGap = 4,
+    layoutDirection = .LeftToRight
+  },
+  backgroundColor = COLOR_LIGHT_GREY
+}
+
+default_text: clay.TextElementConfig : {
+  fontSize = 16,
+  textColor = COLOR_BLACK,
+  wrapMode = .Newlines
+}
 
 pool_add :: proc "contextless" (pool: []Pool_Item, id: u32, current_frame: i32) -> (idx: i32) {
   context = runtime.default_context()
@@ -109,28 +137,6 @@ pool_count_active :: proc (pool: []Pool_Item, frame: i32) -> int {
     }
   }
   return count
-
-}
-
-icon_config: clay.ElementDeclaration = {
-  layout = {
-    sizing = { width = clay.SizingFixed(16), height = clay.SizingFixed(16)},
-  }
-}
-
-tag_config: clay.ElementDeclaration = {
-  layout = {
-    padding = clay.PaddingAll(2),
-    childGap = 4,
-    layoutDirection = .LeftToRight
-  },
-  backgroundColor = COLOR_LIGHT_GREY
-}
-
-default_text: clay.TextElementConfig : {
-  fontSize = 16,
-  textColor = COLOR_BLACK,
-  wrapMode = .Newlines
 }
 
 DelayedEaseOut :: proc "cdecl" (arguments: clay.TransitionCallbackArguments) -> bool {
@@ -207,7 +213,6 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
         } else {
           claystate.treepool[idx].id = 0
           claystate.treepool[idx].last_updated = 0
-
         }
       }
     }
@@ -221,13 +226,13 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
       count = list_tag.value.list.count & 0x00ffffff
     }
 
-    if clay.UI(clay.ID_LOCAL("TagList", child_index))({
+    taglist_id := clay.ID_LOCAL("TagList", child_index)
+    if clay.UI(taglist_id)({
       layout = {
         layoutDirection = .TopToBottom,
         childGap = 4
       }
     }) {
-      taglist_id := clay.GetOpenElementId()
 
       // DESC: HEADER
       if clay.UI(clay.ID_LOCAL("TagListHeader"))({
@@ -260,12 +265,12 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
         clay.Text(text, default_text)
 
         if (count > 0) {
-          clay.OnHover(tree_hover, rawptr(uintptr(taglist_id)))
+          clay.OnHover(tree_hover, rawptr(uintptr(taglist_id.id)))
         }
       }
         // NOTE: one frame delay on the update of the mouse click
 
-        idx := pool_get(claystate.treepool[:], taglist_id)
+        idx := pool_get(claystate.treepool[:], taglist_id.id)
         active := idx >= 0
 
         if (active && count > 0) {
@@ -273,11 +278,7 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
 
           // DESC: CHILDREN
           if clay.UI(clay.ID_LOCAL("TagListBody"))({
-            layout = {
-              padding = { TREENODE_IDENT, 0, 0, 0 },
-              layoutDirection = .TopToBottom,
-              childGap = 4,
-            }
+            layout = LAYOUT_TREE_BODY
           }) {
             if list_tag.type == .Compound {
               for child_index : i32 = 0; child_index < count; child_index += 1 {
@@ -442,7 +443,99 @@ clay_is_scrolling :: proc(claystate: Clay_State) -> bool {
   return claystate.vertical_scrollbar.grab_pos != 0 || claystate.horizontal_scrollbar.grab_pos != 0
 }
 
-clay_nbt_browser :: proc(header: nbtfinder.NBT_Decoded_Header) {
+clay_files :: proc(appstate: ^nbtfinder.AppState) {
+  if clay.UI(clay.ID("SelectedFiles"))({
+    layout = {
+      layoutDirection = .TopToBottom
+    }
+  }) {
+    for file_index := 0; file_index < len(appstate.file_store.staged_files); file_index += 1 {
+      assert(file_index < (1 << 32) - 1)
+
+      file_id := clay.ID_LOCAL("File", u32(file_index))
+      if clay.UI(file_id)({
+        layout = {
+          layoutDirection = .TopToBottom,
+          childGap = 4
+        }
+      }) {
+        id := file_id.id
+
+        idx := pool_get(claystate.treepool[:], id)
+        active := idx >= 0
+
+        if clay.UI(clay.ID_LOCAL("FileHeader", u32(file_index)))({
+          layout = {
+            padding = { 4, 4, 2, 2 },
+            childGap = 4,
+            layoutDirection = .LeftToRight
+          },
+          cornerRadius = clay.CornerRadiusAll(2),
+          backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
+          transition = {
+            handler = DelayedEaseOut,
+            duration = 0.2,
+            // A "flag" enum is used to specify which properties to transition, use a bitwise OR (|) to construct the flags.
+            properties = { .X, .OverlayColor } | clay.TransitionPropertyBoundingBox,
+            interactionHandling = .AllowInteractionsWhileTransitioningPosition,
+            enter = { 
+              setInitialState = EnterExitSlide,
+              trigger = .TriggerOnFirstParentFrame
+              },
+              exit = { 
+                setFinalState = EnterExitSlide,
+                //trigger = .TriggerWhenParentExits
+              },
+            }
+          }) {
+            if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
+              if active {
+                // toggle
+                claystate.treepool[idx].id = 0
+                claystate.treepool[idx].last_updated = 0
+              } else {
+                idx = pool_add(claystate.treepool[:], id, claystate.current_frame)
+
+                file := appstate.file_store.staged_files[file_index]
+
+                handler, err := nbtfinder.get_or_open_file(appstate, file_index)
+                assert(err == nil)
+
+                active = true
+              }
+            }
+
+            filename := appstate.file_store.staged_files[file_index].filename
+            assert(len(filename) > 1)
+
+            clay.Text(filename, default_text)
+          }
+
+
+
+          if (active) {
+            pool_update(claystate.treepool[:], idx, claystate.current_frame)
+
+            if clay.UI(clay.ID_LOCAL("FileBody"))({
+              layout = LAYOUT_TREE_BODY
+            }) {
+              handler, err := nbtfinder.get_or_open_file(appstate, file_index)
+              assert(err == nil)
+
+              switch v in handler.data {
+                case ^nbtfinder.NBT_Decoded_Header:
+                  clay_draw_nbt_header(v^)
+                case nbtfinder.MCA_File_Header:
+                case:
+              }
+            }
+          }
+        }
+      }
+    }
+}
+
+clay_nbt_browser :: proc(appstate: ^nbtfinder.AppState) {
   move_scrollbar :: proc(mouse_relative_percentage: f32, view_percent: f32, content_size: f32, out_pos: ^f32) {
     m := mouse_relative_percentage
     m = min(mouse_relative_percentage, 1 - view_percent/2)
@@ -451,8 +544,6 @@ clay_nbt_browser :: proc(header: nbtfinder.NBT_Decoded_Header) {
 
     out_pos^ = -mouse_relative_percentage*content_size
   }
-
-
 
   vertical_scrollbar :: proc(container_id: clay.ElementId) -> bool {
     scrollbar_hover_vertical :: proc "c" (id: clay.ElementId, pointerData: clay.PointerData, userData: rawptr) {
@@ -604,7 +695,7 @@ clay_nbt_browser :: proc(header: nbtfinder.NBT_Decoded_Header) {
     },
   }) {
     rendered_vertical: bool
-    tags_id : clay.ElementId
+    content_id : clay.ElementId
 
     // DESC: up part
     if clay.UI()({
@@ -613,7 +704,9 @@ clay_nbt_browser :: proc(header: nbtfinder.NBT_Decoded_Header) {
         layoutDirection = .LeftToRight
       }
     }) {
-      if clay.UI(clay.ID("Tags"))({
+      content_id = clay.ID_LOCAL("Content")
+
+      if clay.UI(content_id)({
         layout = {
           sizing = { width = clay.SizingGrow({}), height = clay.SizingGrow({}) },
         },
@@ -623,12 +716,10 @@ clay_nbt_browser :: proc(header: nbtfinder.NBT_Decoded_Header) {
           childOffset = clay.GetScrollOffset()
         }
       }) {
-        clay_draw_nbt_header(header)
+        clay_files(appstate)
       }
 
-      tags_id = clay.GetElementId(clay.MakeString("Tags"))
-
-      rendered_vertical = vertical_scrollbar(tags_id)
+      rendered_vertical = vertical_scrollbar(content_id)
     }
 
     // DESC: down part
@@ -639,8 +730,8 @@ clay_nbt_browser :: proc(header: nbtfinder.NBT_Decoded_Header) {
       }
     }) {
 
-      assert(tags_id.id != 0)
-      rendered_horizontal := horizontal_scrollbar(tags_id)
+      assert(content_id.id != 0)
+      rendered_horizontal := horizontal_scrollbar(content_id)
 
       if rendered_vertical && rendered_horizontal {
 
@@ -682,58 +773,7 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
     }) {
       count := pool_count_active(claystate.treepool[:], claystate.current_frame - 1)
 
-      if clay.UI(clay.ID("SelectedFiles"))({
-        layout = {
-          layoutDirection = .TopToBottom
-        }
-      }) {
-        for file_index := 0; file_index < len(appstate.file_store.staged_files); file_index += 1 {
-          assert(file_index < (1 << 32) - 1)
-          if clay.UI(clay.ID_LOCAL("File", u32(file_index)))({
-            layout = {
-              padding = { 4, 4, 2, 2 },
-              childGap = 4,
-              layoutDirection = .LeftToRight
-            },
-            cornerRadius = clay.CornerRadiusAll(2),
-            backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
-            transition = {
-              handler = DelayedEaseOut,
-              duration = 0.2,
-              // A "flag" enum is used to specify which properties to transition, use a bitwise OR (|) to construct the flags.
-              properties = { .X, .OverlayColor } | clay.TransitionPropertyBoundingBox,
-              interactionHandling = .AllowInteractionsWhileTransitioningPosition,
-              enter = { 
-                setInitialState = EnterExitSlide,
-                trigger = .TriggerOnFirstParentFrame
-              },
-              exit = { 
-                setFinalState = EnterExitSlide,
-                //trigger = .TriggerWhenParentExits
-              },
-            }
-          }) {
-            if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
-              file := appstate.file_store.staged_files[file_index]
-
-              nbtfinder.open_file(appstate, file_index)
-            }
-
-            filename := appstate.file_store.staged_files[file_index].filename
-
-            assert(len(filename) > 1)
-
-            clay.Text(filename, default_text)
-          }
-        }
-      }
-
-
-      /*
-      if (appstate.header != nil) {
-        clay_nbt_browser(appstate.header^)
-      }
-      */
+      clay_nbt_browser(appstate)
 
       if clay.UI()({
         layout = {
@@ -745,10 +785,30 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
           claystate.print_types = !claystate.print_types
         }
       }
-      // DESC: STATUS BAR
-      if clay.UI()({}) {
-        text := fmt.tprintf("Open Treenodes last frame: %v", count)
-        clay.Text(text, default_text)
+      if clay.UI(clay.ID("StatusBar"))({
+        layout = {
+          sizing = { width = clay.SizingGrow(), height = clay.SizingFit() }
+        }
+      }) {
+        if clay.UI()({}) {
+          text := fmt.tprintf("open: %v/48", count)
+          clay.Text(text, default_text)
+        }
+
+        if clay.UI()({
+          layout = {
+            sizing = { width = clay.SizingGrow(), height = clay.SizingFit() }
+          }
+        }) {
+
+        }
+
+        if clay.UI()({}) {
+          frame_duration := appstate.last_frame_duration
+
+          text := fmt.tprintf("frame:%.4v", frame_duration)
+          clay.Text(text, default_text)
+        }
       }
     }
 

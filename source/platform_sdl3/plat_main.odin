@@ -5,6 +5,7 @@ import "core:os"
 import "base:runtime"
 import "core:strings"
 import "core:fmt"
+import "core:time"
 import si "core:sys/info"
 
 import "vendor:sdl3"
@@ -161,11 +162,15 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
   return app_result
 }
 
-AppIterate :: proc "c" (appstate: rawptr) -> sdl3.AppResult {
+AppIterate :: proc "c" (_appstate: rawptr) -> sdl3.AppResult {
   context = runtime.default_context()
 
+  appstate := cast(^nbtfinder.AppState)_appstate
+
+  tick := time.tick_now()
+
   {
-    keep_updating := ui_render(cast(^nbtfinder.AppState)appstate)
+    keep_updating := ui_render(appstate)
 
     if keep_updating {
       sdl3.SetHint(sdl3.HINT_MAIN_CALLBACK_RATE, "60")
@@ -175,6 +180,10 @@ AppIterate :: proc "c" (appstate: rawptr) -> sdl3.AppResult {
   }
 
   free_all(context.temp_allocator)
+
+  frame_duration := time.tick_since(tick)
+  nbtfinder.update_last_frame_duration(appstate, frame_duration)
+
   app_result := sdl3.AppResult.CONTINUE
   return app_result
 }

@@ -1,5 +1,6 @@
 package nbtfinder
 
+import "core:time"
 import "core:fmt"
 import mu "vendor:microui"
 
@@ -25,7 +26,9 @@ Compute_Methods :: enum {
 AppState :: struct {
   compute_method: Compute_Methods,
 
-  file_store: File_Store
+  file_store: File_Store,
+
+  last_frame_duration: time.Duration
 }
 
 CPU_Feature :: enum {
@@ -53,5 +56,9 @@ init :: proc(appstate : ^AppState, cpu_features : CPU_Features) -> (ok : bool) {
   }
 
   return true
+}
+
+update_last_frame_duration :: proc(appstate: ^AppState, last_frame_duration: time.Duration) {
+  appstate.last_frame_duration = last_frame_duration
 }
 

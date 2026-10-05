@@ -1,22 +1,13 @@
 package nbtfinder
 
+import "core:bytes"
+import "core:compress/gzip"
 import "core:strings"
 import "core:path/filepath"
 
 File_Store :: struct {
-  nbt_decoded_cache: [16]NBT_Decoded_Cache_Entry,
+  file_handler_cache: [16]File_Handler,
   staged_files: [dynamic]Staged_File,
-}
-
-Staged_File :: struct {
-  file_path: string,
-  filename: string,
-  cached_entry: ^NBT_Decoded_Cache_Entry // 0 = not available
-}
-
-NBT_Decoded_Cache_Entry :: struct {
-  header: ^NBT_Decoded_Header,
-  last_used: int
 }
 
 NBT_File_Type :: enum {
@@ -25,8 +16,23 @@ NBT_File_Type :: enum {
   GZIP,
 }
 
-file_type_guess :: proc(filename: string) -> NBT_File_Type {
+Staged_File :: struct {
+  file_path: string,
+  filename: string,
+  cached_entry: ^File_Handler, // nil = not available
+  type: NBT_File_Type
+}
 
+File_Handler :: struct {
+  data : union {
+   ^NBT_Decoded_Header,
+   MCA_File_Header
+  },
+  last_used: int,
+  staged_file_index: int
+}
+
+file_type_guess :: proc(filename: string) -> NBT_File_Type {
   if len(filename) < 5 {
     return .UNKNOWN
   }
@@ -35,7 +41,7 @@ file_type_guess :: proc(filename: string) -> NBT_File_Type {
     return .MCA
   }
   
-  if filename == "level.dat" {
+  if len(filename) >= 9 && filename[len(filename)-9:] == "level.dat" {
     return .GZIP
   }
 
@@ -74,27 +80,76 @@ stage_files :: proc(appstate: ^AppState, file_list: [^]cstring) {
     staged_file : Staged_File = {
       file_path = file_path,
       filename = filename,
-      cached_entry = nil
+      cached_entry = nil,
+      type = file_type_guess(file_path)
     }
 
     append(&(file_store.staged_files), staged_file)
   }
 }
 
-open_file :: proc(appstate: ^AppState, staged_file_index: int) {
-  file_path := appstate.file_store.staged_files[staged_file_index].filename
+gzip_read_Error :: union {
+  gzip.Error
+}
+
+gzip_read :: proc(file_path: string) -> (handler: ^NBT_Decoded_Header, err: gzip_read_Error) {
+  buf: bytes.Buffer
+  gzip.load_from_file(file_path, &buf, -1, context.temp_allocator) or_return
+
+  header, _ := nbt_decode(buf.buf[:])
+  return header, {}
+}
+
+open_file_Error :: union {
+  gzip_read_Error
+}
+
+get_file :: proc(appstate: ^AppState, staged_file_index: int) -> (handle: ^File_Handler) {
+  return appstate.file_store.staged_files[staged_file_index].cached_entry
+}
+
+get_or_open_file :: proc(appstate: ^AppState, staged_file_index: int) -> (handler: ^File_Handler, err: open_file_Error) {
+  cached := appstate.file_store.staged_files[staged_file_index].cached_entry
+  if cached != nil {
+    return cached, {}
+  }
+
+
+  return open_file(appstate, staged_file_index)
+}
+
+open_file :: proc(appstate: ^AppState, staged_file_index: int) -> (handler: ^File_Handler, err: open_file_Error) {
+  file_path := appstate.file_store.staged_files[staged_file_index].file_path
 
   file_type := file_type_guess(file_path)
+
+  new_handler: File_Handler
+  new_handler.staged_file_index = staged_file_index
 
   switch file_type {
     case .UNKNOWN:
       assert(false)
     case .MCA:
-      Mca_read(appstate, file_path)
+      new_handler.data, _ = MCA_read(appstate, file_path)
     case .GZIP:
-      assert(false)
-
+      new_handler.data = gzip_read(file_path) or_return
   }
+
+  for &file_handler in appstate.file_store.file_handler_cache {
+    if file_handler.data == nil {
+      file_handler = new_handler
+
+      appstate.file_store.staged_files[staged_file_index].cached_entry = &file_handler
+      return &file_handler, {};
+    }
+  }
+
+  assert(false)
+  return nil, {}
+}
+
+close_file :: proc(appstate: ^AppState, staged_file_index: int) {
+  appstate.file_store.staged_files[staged_file_index].cached_entry = nil
 }
 
 
