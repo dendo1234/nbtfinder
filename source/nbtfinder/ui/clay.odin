@@ -17,6 +17,11 @@ ScrollBar_State :: struct {
   start_pos: f32
 }
 
+Transition_Tracker :: struct {
+  clay_id: clay.ElementId,
+  remaining_time: f32
+}
+
 Clay_State :: struct {
   print_types: bool,
   enable_drag: bool,
@@ -45,6 +50,8 @@ Clay_State :: struct {
   treepool: [48]Pool_Item,
   current_frame: i32,
   //current_ident: u16,
+
+  transient_transitions: [dynamic; 64]Transition_Tracker,
   
   // NOTE: if grab_pos = 0 -> not grabbing
   // NOTE(dendo): can this break if the mouse grab at pixel 0?
@@ -57,43 +64,6 @@ Clay_State :: struct {
 }
 
 claystate : ^Clay_State
-
-// Define some colors.
-COLOR_LIGHT :: clay.Color{224, 215, 210, 255}
-COLOR_RED :: clay.Color{168, 66, 28, 255}
-COLOR_ORANGE :: clay.Color{225, 138, 50, 255}
-COLOR_BLACK :: clay.Color{0, 0, 0, 255}
-COLOR_LIGHT_GREY :: clay.Color{200, 200, 200, 255}
-COLOR_WHITE :: clay.Color{255, 255, 255, 255}
-
-TREENODE_IDENT :: 16
-
-LAYOUT_TREE_BODY : clay.LayoutConfig : {
-  padding = { TREENODE_IDENT, 0, 0, 0 },
-  layoutDirection = .TopToBottom,
-  childGap = 4,
-}
-
-icon_config: clay.ElementDeclaration = {
-  layout = {
-    sizing = { width = clay.SizingFixed(16), height = clay.SizingFixed(16)},
-  }
-}
-
-tag_config: clay.ElementDeclaration = {
-  layout = {
-    padding = clay.PaddingAll(2),
-    childGap = 4,
-    layoutDirection = .LeftToRight
-  },
-  backgroundColor = COLOR_LIGHT_GREY
-}
-
-default_text: clay.TextElementConfig : {
-  fontSize = 16,
-  textColor = COLOR_BLACK,
-  wrapMode = .Newlines
-}
 
 pool_add :: proc "contextless" (pool: []Pool_Item, id: u32, current_frame: i32) -> (idx: i32) {
   context = runtime.default_context()
@@ -139,6 +109,48 @@ pool_count_active :: proc (pool: []Pool_Item, frame: i32) -> int {
   return count
 }
 
+/////////////////////////////////////
+// Styles
+/////////////////////////////////////
+
+// Define some colors.
+COLOR_LIGHT :: clay.Color{224, 215, 210, 255}
+COLOR_RED :: clay.Color{168, 66, 28, 255}
+COLOR_ORANGE :: clay.Color{225, 138, 50, 255}
+COLOR_BLACK :: clay.Color{0, 0, 0, 255}
+COLOR_LIGHT_GREY :: clay.Color{200, 200, 200, 255}
+COLOR_WHITE :: clay.Color{255, 255, 255, 255}
+
+TREENODE_IDENT :: 16
+
+LAYOUT_TREE_BODY : clay.LayoutConfig : {
+  padding = { TREENODE_IDENT, 0, 0, 0 },
+  layoutDirection = .TopToBottom,
+  childGap = 4,
+}
+
+icon_config: clay.ElementDeclaration = {
+  layout = {
+    sizing = { width = clay.SizingFixed(16), height = clay.SizingFixed(16)},
+  }
+}
+
+tag_config: clay.ElementDeclaration = {
+  layout = {
+    padding = clay.PaddingAll(2),
+    childGap = 4,
+    layoutDirection = .LeftToRight
+  },
+  backgroundColor = COLOR_LIGHT_GREY
+}
+
+default_text: clay.TextElementConfig : {
+  fontSize = 16,
+  textColor = COLOR_BLACK,
+  wrapMode = .Newlines
+}
+
+
 DelayedEaseOut :: proc "cdecl" (arguments: clay.TransitionCallbackArguments) -> bool {
   time := arguments.initial.borderColor[0]
   if arguments.elapsedTime < time {
@@ -163,14 +175,67 @@ EnterExitSlide :: proc "cdecl" (initialState: clay.TransitionData, properties: c
 
   // assert(!(.BorderColor in properties))
   targetState.borderColor[0] = claystate.time_to_delay
+
+  id := transmute(u32)(initialState.borderColor[1])
+  // assert(id != nil)
+  for &transition in claystate.transient_transitions {
+    if transition.clay_id.id == id {
+      transition.remaining_time = claystate.time_to_delay + 0.2 // transition duration
+    }
+  }
+
   claystate.time_to_delay += 0.02
 
   return targetState
 }
 
-clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NBT_Tag, child_index: u32 = 0) {
-  clay_basic_tag :: proc(text : string, image: rawptr, child_index: u32) {
-    if clay.UI(clay.ID_LOCAL("Tag", child_index))({
+item_transition :: proc(id: clay.ElementId, first_frame: bool) -> (transition: clay.TransitionElementConfig) {
+  transition_active: clay.TransitionElementConfig = {
+    handler = DelayedEaseOut,
+    duration = 0.2,
+    properties = { .X, .OverlayColor },
+    interactionHandling = .AllowInteractionsWhileTransitioningPosition,
+    enter = {
+      setInitialState = EnterExitSlide,
+      trigger = .TriggerOnFirstParentFrame
+    },
+    exit = {
+      setFinalState = EnterExitSlide,
+      //trigger = .TriggerWhenParentExits
+    }
+  }
+  transition = {}
+
+  if (first_frame) {
+    if len(claystate.transient_transitions) < cap(claystate.transient_transitions) {
+      transition = transition_active
+
+      // the remaining_time time field is filled by the clay callback
+      append(&claystate.transient_transitions, Transition_Tracker{ clay_id = id })
+      return
+    } else {
+      // no space, skip transition
+      return
+    }
+  } else {
+    for transition in claystate.transient_transitions {
+      if transition.clay_id.id == id.id {
+        return transition_active
+      }
+    }
+    return
+  }
+}
+
+/////////////////////////////////////
+// UI
+/////////////////////////////////////
+
+
+
+clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NBT_Tag, child_index: u32 = 0, first_frame: bool = false) {
+  clay_basic_tag :: proc(text : string, image: rawptr, id: clay.ElementId, first_frame: bool, $clicked_proc: proc(u32) -> bool) -> (changed: bool) {
+    if clay.UI(id)({
       layout = {
         padding = { 4, 4, 2, 2 },
         childGap = 4,
@@ -178,45 +243,22 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
       },
       cornerRadius = clay.CornerRadiusAll(2),
       backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
-      transition = {
-        handler = DelayedEaseOut,
-        duration = 0.2,
-        // A "flag" enum is used to specify which properties to transition, use a bitwise OR (|) to construct the flags.
-        properties = { .X, .OverlayColor },
-        interactionHandling = .AllowInteractionsWhileTransitioningPosition,
-        enter = { 
-          setInitialState = EnterExitSlide,
-          trigger = .TriggerOnFirstParentFrame
-        },
-        exit = { 
-          setFinalState = EnterExitSlide,
-          //trigger = .TriggerWhenParentExits
-        },
-      }
+      border = {
+        color = {0, transmute(f32)id.id, 0, 0}
+      },
+      transition = item_transition(id, first_frame)
     }) {
       config := icon_config
       config.image.imageData = image
       if clay.UI()(config) {}
       clay.Text(text, default_text)
+
+      return clicked_proc(id.id)
     }
+    return false
   } // end clay_basic_tag
 
-  clay_dropdown_tag :: proc (header: nbtfinder.NBT_Decoded_Header, text: string, image: rawptr, child_index: u32, list_tag: nbtfinder.NBT_Tag) {
-    tree_hover :: proc "c" (id: clay.ElementId, pointerData: clay.PointerData, userData: rawptr) {
-      id := u32(uintptr(userData))
-
-      idx := pool_get(claystate.treepool[:], id)
-      active := idx >= 0
-      if pointerData.state == .PressedThisFrame {
-        if idx == -1 {
-          idx = pool_add(claystate.treepool[:], id, claystate.current_frame)
-        } else {
-          claystate.treepool[idx].id = 0
-          claystate.treepool[idx].last_updated = 0
-        }
-      }
-    }
-
+  clay_dropdown_tag :: proc (header: nbtfinder.NBT_Decoded_Header, text: string, image: rawptr, list_tag: nbtfinder.NBT_Tag, child_index: u32, first_frame: bool) {
     start_index: u32 = list_tag.value.list.start_index
     count: i32
     if list_tag.type == .Compound {
@@ -233,44 +275,27 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
         childGap = 4
       }
     }) {
+      header_clicked :: proc(id: u32) -> (changed: bool) {
+        if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
+          idx := pool_get(claystate.treepool[:], id)
+          if idx == -1 {
+            idx = pool_add(claystate.treepool[:], id, claystate.current_frame)
+          } else {
+            claystate.treepool[idx].id = 0
+            claystate.treepool[idx].last_updated = 0
+            idx = -1
+          }
+          return true
+        }
+        return false
+      }
 
       // DESC: HEADER
-      if clay.UI(clay.ID_LOCAL("TagListHeader"))({
-        layout = {
-          padding = { 4, 4, 2, 2 },
-          childGap = 4,
-          layoutDirection = .LeftToRight
-        },
-        cornerRadius = clay.CornerRadiusAll(2),
-        backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
-        transition = {
-          handler = DelayedEaseOut,
-          duration = 0.2,
-          // A "flag" enum is used to specify which properties to transition, use a bitwise OR (|) to construct the flags.
-          properties = { .X, .OverlayColor } | clay.TransitionPropertyBoundingBox,
-          interactionHandling = .AllowInteractionsWhileTransitioningPosition,
-          enter = { 
-            setInitialState = EnterExitSlide,
-            trigger = .TriggerOnFirstParentFrame
-          },
-          exit = { 
-            setFinalState = EnterExitSlide,
-            //trigger = .TriggerWhenParentExits
-          },
-        }
-      }) {
-        config := icon_config
-        config.image.imageData = image
-        if clay.UI()(config) {}
-        clay.Text(text, default_text)
+      id := clay.ID_LOCAL("TagListHeader")
 
-        if (count > 0) {
-          clay.OnHover(tree_hover, rawptr(uintptr(taglist_id.id)))
-        }
-      }
-        // NOTE: one frame delay on the update of the mouse click
-
-        idx := pool_get(claystate.treepool[:], taglist_id.id)
+      changed := clay_basic_tag(text, image, id, first_frame, header_clicked)
+      {
+        idx := pool_get(claystate.treepool[:], id.id)
         active := idx >= 0
 
         if (active && count > 0) {
@@ -284,7 +309,7 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
               for child_index : i32 = 0; child_index < count; child_index += 1 {
                 tag := header.tags[start_index + u32(child_index)]
 
-                clay_draw_tag(header, &tag, u32(child_index))
+                clay_draw_tag(header, &tag, u32(child_index), changed)
               }
             } else {
               for child_index : i32 = 0; child_index < count; child_index += 1 {
@@ -292,13 +317,15 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
                 tag.type = list_tag.value.list.children_type
                 tag.value = header.unnamed_tags[start_index + u32(child_index)]
 
-                clay_draw_tag(header, &tag, u32(child_index))
+                clay_draw_tag(header, &tag, u32(child_index), changed)
               }
             }
           }
         }
       }
-    } // end clay_dropdown_tag
+
+    }
+  } // end clay_dropdown_tag
 
   text: string
   image: rawptr
@@ -427,9 +454,13 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
   }
 
   if tag.type == .Compound || tag.type == .List {
-    clay_dropdown_tag(header, text, image, child_index, tag^)
+    clay_dropdown_tag(header, text, image, tag^, child_index, first_frame)
   } else {
-    clay_basic_tag(text, image, child_index)
+    nothing :: proc(a: u32) -> bool {
+      return false
+    }
+    id := clay.ID_LOCAL("Tag", child_index)
+    clay_basic_tag(text, image, id, first_frame, nothing)
   }
 }
 
@@ -787,11 +818,16 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
       }
       if clay.UI(clay.ID("StatusBar"))({
         layout = {
-          sizing = { width = clay.SizingGrow(), height = clay.SizingFit() }
+          sizing = { width = clay.SizingGrow(), height = clay.SizingFit() },
+          childGap = 4
         }
       }) {
         if clay.UI()({}) {
           text := fmt.tprintf("open: %v/48", count)
+          clay.Text(text, default_text)
+        }
+        if clay.UI()({}) {
+          text := fmt.tprintf("transitions: %v/%v", len(claystate.transient_transitions), cap(claystate.transient_transitions))
           clay.Text(text, default_text)
         }
 
@@ -814,7 +850,23 @@ clay_draw_commands :: proc(appstate: ^nbtfinder.AppState, claystateptr: ^Clay_St
 
 
 
-  return clay.EndLayout(delta_time)
+  ret := clay.EndLayout(delta_time)
+
+  for index := 0; index < len(claystate.transient_transitions); {
+    transition := &claystate.transient_transitions[index]
+    transition.remaining_time -= delta_time
+
+    if transition.remaining_time <= 0 {
+      // swap remove
+      last := pop(&claystate.transient_transitions)
+      transition^ = last
+
+    } else {
+      index += 1
+    }
+  }
+
+  return ret
 }
 
 

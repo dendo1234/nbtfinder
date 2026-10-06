@@ -66,6 +66,10 @@ stage_files :: proc(appstate: ^AppState, file_list: [^]cstring) {
   file_store := &appstate.file_store
   clear(&file_store.staged_files)
 
+  if file_list == nil {
+    return
+  }
+
   for file_index := 0; file_list[file_index] != nil; file_index += 1 {
     file_path := strings.clone_from_cstring(file_list[file_index])
 
@@ -75,6 +79,10 @@ stage_files :: proc(appstate: ^AppState, file_list: [^]cstring) {
         filename = file_path[i+1:]
         break;
       }
+    }
+
+    if len(filename) == 0 {
+      filename = file_path
     }
 
     staged_file : Staged_File = {

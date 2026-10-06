@@ -154,8 +154,17 @@ AppInit :: proc "c" (appstate: ^rawptr, argc: i32, argv: [^]cstring) -> sdl3.App
     
     //sdl3.ShowOpenFolderDialog(DialogFileCallback, platstate, platstate.window, nil, false)
 
-  }
+    files : []cstring = {
+      "level.dat",
+      "2-level.dat",
+      "dummy"
+    }
 
+    files[2] = nil
+
+    nbtfinder.stage_files(memory, raw_data(files))
+
+  }
 
 
   app_result := sdl3.AppResult.CONTINUE
