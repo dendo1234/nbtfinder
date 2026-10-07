@@ -9,8 +9,11 @@ import clay "clay:clay-odin"
 
 Pool_Item :: struct {
   id : u32,
-  last_updated : i32
+  last_updated : i32,
+	current_page: i32 // 50 elements pages
 }
+
+BIG_LIST_PAGE_SIZE :: 10
 
 ScrollBar_State :: struct {
   grab_pos: f32,
@@ -305,21 +308,139 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
           if clay.UI(clay.ID_LOCAL("TagListBody"))({
             layout = LAYOUT_TREE_BODY
           }) {
-            if list_tag.type == .Compound {
-              for child_index : i32 = 0; child_index < count; child_index += 1 {
-                tag := header.tags[start_index + u32(child_index)]
 
-                clay_draw_tag(header, &tag, u32(child_index), changed)
-              }
-            } else {
-              for child_index : i32 = 0; child_index < count; child_index += 1 {
-                tag : nbtfinder.NBT_Tag
-                tag.type = list_tag.value.list.children_type
-                tag.value = header.unnamed_tags[start_index + u32(child_index)]
+						if (count > 50) {
+							// render partialy
 
-                clay_draw_tag(header, &tag, u32(child_index), changed)
-              }
-            }
+							if clay.UI(clay.ID_LOCAL("BigListRenderer"))({
+								layout = {
+									sizing = { width = clay.SizingGrow(), height = clay.SizingGrow() },
+									layoutDirection = .TopToBottom
+								}
+
+							}) {
+								current_page := &claystate.treepool[idx].current_page
+								page_count := (count - 1) / BIG_LIST_PAGE_SIZE
+
+
+								if clay.UI(clay.ID_LOCAL("BigListControlls"))({
+									layout = {
+										sizing = { width = clay.SizingGrow(), height = clay.SizingFit() },
+										childGap = 8
+									}
+
+								}) {
+									if clay.UI(clay.ID_LOCAL("SuperLeftArrow"))({
+
+									}) {
+										clay.Text("<<", default_text)
+										if clay.Hovered() && clay.GetPointerState().state == .Pressed {
+											current_page^ -= 5
+											if current_page^ < 0 {
+												current_page^ = page_count
+											}
+											changed = true
+										}
+									}
+
+									if clay.UI(clay.ID_LOCAL("LeftArrow"))({
+
+									}) {
+										clay.Text("<", default_text)
+										if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
+											current_page^ -= 1
+											if current_page^ < 0 {
+												current_page^ = page_count
+											}
+											changed = true
+										}
+									}
+
+									if clay.UI()({
+										layout = {
+											sizing = { width = clay.SizingFixed(100), height = clay.SizingFit() },
+											childAlignment = { x = .Center, y = .Center }
+										}
+
+									}) {
+										str := fmt.tprintf("%v/%v", current_page^, page_count)
+
+										clay.Text(str, default_text)
+
+									}
+
+									if clay.UI(clay.ID_LOCAL("RightArrow"))({
+
+									}) {
+										clay.Text(">", default_text)
+										if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
+											current_page^ += 1
+											if current_page^ > page_count {
+												current_page^ = 0
+											}
+											changed = true
+										}
+									}
+
+									if clay.UI(clay.ID_LOCAL("SuperRightArrow"))({
+
+									}) {
+										clay.Text(">>", default_text)
+										if clay.Hovered() && clay.GetPointerState().state == .Pressed {
+											current_page^ += 5
+											if current_page^ > page_count {
+												current_page^ = 0
+											}
+											changed = true
+										}
+									}
+								}
+
+								start_point := current_page^ * BIG_LIST_PAGE_SIZE
+								end_point := start_point + BIG_LIST_PAGE_SIZE
+								end_point = end_point > count ? count : end_point
+
+								if clay.UI(clay.ID_LOCAL("BigListTags", u32(current_page^)))({
+									layout = {
+										layoutDirection = .TopToBottom
+									}
+
+								}) {
+									if list_tag.type == .Compound {
+										for child_index := start_point; child_index < end_point; child_index += 1 {
+											tag := header.tags[start_index + u32(child_index)]
+
+											clay_draw_tag(header, &tag, u32(child_index), changed)
+										}
+									} else {
+										for child_index := start_point; child_index < end_point; child_index += 1 {
+											tag : nbtfinder.NBT_Tag
+											tag.type = list_tag.value.list.children_type
+											tag.value = header.unnamed_tags[start_index + u32(child_index)]
+
+											clay_draw_tag(header, &tag, u32(child_index), changed)
+										}
+									}
+								}
+
+							}
+						} else {
+							if list_tag.type == .Compound {
+								for child_index : i32 = 0; child_index < count; child_index += 1 {
+									tag := header.tags[start_index + u32(child_index)]
+
+									clay_draw_tag(header, &tag, u32(child_index), changed)
+								}
+							} else {
+								for child_index : i32 = 0; child_index < count; child_index += 1 {
+									tag : nbtfinder.NBT_Tag
+									tag.type = list_tag.value.list.children_type
+									tag.value = header.unnamed_tags[start_index + u32(child_index)]
+
+									clay_draw_tag(header, &tag, u32(child_index), changed)
+								}
+							}
+						}
           }
         }
       }

@@ -649,8 +649,8 @@ clay_render :: proc(appstate: ^nbtfinder.AppState) -> (keep_updating: bool){
 
 
 	current_time := sdl3.GetTicksNS()
-	if clay.GetPointerState().state == .PressedThisFrame {
-	sdl3_clay_state.update_till = current_time + 2e9 // 2 seconds
+	if clay.GetPointerState().state == .Pressed || clay.GetPointerState().state == .PressedThisFrame {
+	sdl3_clay_state.update_till = current_time + 1e9 // 1 seconds
 	}
 	
 	return sdl3_clay_state.update_till > current_time
