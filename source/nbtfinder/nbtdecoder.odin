@@ -810,3 +810,14 @@ nbt_decode :: proc(nbt_bytes : []u8) -> (header : ^NBT_Decoded_Header, timing: T
 
   return header, timing
 }
+
+/*
+NBT_search :: proc(header: ^NBT_Decoded_Header, term: string) {
+	test: NBT_String
+	if len(term) <= size_of(test.inplace.chars) {
+		for
+
+	}
+}
+*/
+

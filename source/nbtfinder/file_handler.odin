@@ -29,7 +29,8 @@ File_Handler :: struct {
    MCA_File_Header
   },
   last_used: int,
-  staged_file_index: int
+  staged_file_index: int,
+	decoded_size: int,
 }
 
 file_type_guess :: proc(filename: string) -> NBT_File_Type {

@@ -192,6 +192,8 @@ EnterExitSlide :: proc "cdecl" (initialState: clay.TransitionData, properties: c
   return targetState
 }
 
+// NOTE: this expects:
+// id := transmute(u32)(initialState.borderColor[1])
 item_transition :: proc(id: clay.ElementId, first_frame: bool) -> (transition: clay.TransitionElementConfig) {
   transition_active: clay.TransitionElementConfig = {
     handler = DelayedEaseOut,
@@ -234,33 +236,36 @@ item_transition :: proc(id: clay.ElementId, first_frame: bool) -> (transition: c
 // UI
 /////////////////////////////////////
 
+clicked_proc_nothing :: proc(input: u32) -> bool {
+	return false
+}
+
+clay_draw_entry :: proc(text : string, image: rawptr, id: clay.ElementId, first_frame: bool, $clicked_proc: proc(u32) -> bool) -> (clicked: bool) {
+	if clay.UI(id)({
+		layout = {
+			padding = { 4, 4, 2, 2 },
+			childGap = 4,
+			layoutDirection = .LeftToRight
+		},
+		cornerRadius = clay.CornerRadiusAll(2),
+		backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
+		border = {
+			color = {0, transmute(f32)id.id, 0, 0}
+		},
+		transition = item_transition(id, first_frame)
+	}) {
+		config := icon_config
+		config.image.imageData = image
+		if clay.UI()(config) {}
+		clay.Text(text, default_text)
+
+		return clicked_proc(id.id)
+	}
+	return false
+}
 
 
 clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NBT_Tag, child_index: u32 = 0, first_frame: bool = false) {
-  clay_basic_tag :: proc(text : string, image: rawptr, id: clay.ElementId, first_frame: bool, $clicked_proc: proc(u32) -> bool) -> (changed: bool) {
-    if clay.UI(id)({
-      layout = {
-        padding = { 4, 4, 2, 2 },
-        childGap = 4,
-        layoutDirection = .LeftToRight
-      },
-      cornerRadius = clay.CornerRadiusAll(2),
-      backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
-      border = {
-        color = {0, transmute(f32)id.id, 0, 0}
-      },
-      transition = item_transition(id, first_frame)
-    }) {
-      config := icon_config
-      config.image.imageData = image
-      if clay.UI()(config) {}
-      clay.Text(text, default_text)
-
-      return clicked_proc(id.id)
-    }
-    return false
-  } // end clay_basic_tag
-
   clay_dropdown_tag :: proc (header: nbtfinder.NBT_Decoded_Header, text: string, image: rawptr, list_tag: nbtfinder.NBT_Tag, child_index: u32, first_frame: bool) {
     start_index: u32 = list_tag.value.list.start_index
     count: i32
@@ -296,7 +301,8 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
       // DESC: HEADER
       id := clay.ID_LOCAL("TagListHeader")
 
-      changed := clay_basic_tag(text, image, id, first_frame, header_clicked)
+      changed := clay_draw_entry(text, image, id, first_frame, header_clicked)
+			changed = changed | first_frame
       {
         idx := pool_get(claystate.treepool[:], id.id)
         active := idx >= 0
@@ -323,11 +329,16 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
 								page_count := (count - 1) / BIG_LIST_PAGE_SIZE
 
 
-								if clay.UI(clay.ID_LOCAL("BigListControlls"))({
+								controls_id := clay.ID_LOCAL("BigListControlls")
+								if clay.UI(controls_id)({
 									layout = {
 										sizing = { width = clay.SizingGrow(), height = clay.SizingFit() },
 										childGap = 8
-									}
+									},
+									border = {
+										color = {0, transmute(f32)controls_id.id, 0, 0}
+									},
+									transition = item_transition(controls_id, changed)
 
 								}) {
 									if clay.UI(clay.ID_LOCAL("SuperLeftArrow"))({
@@ -581,14 +592,14 @@ clay_draw_tag :: proc(header : nbtfinder.NBT_Decoded_Header, tag : ^nbtfinder.NB
       return false
     }
     id := clay.ID_LOCAL("Tag", child_index)
-    clay_basic_tag(text, image, id, first_frame, nothing)
+    clay_draw_entry(text, image, id, first_frame, nothing)
   }
 }
 
-clay_draw_nbt_header :: proc(header : nbtfinder.NBT_Decoded_Header) {
+clay_draw_nbt_header :: proc(header : nbtfinder.NBT_Decoded_Header, first_frame: bool) {
   root_tag := header.tags[header.root_tag_index]
 
-  clay_draw_tag(header, &root_tag)
+  clay_draw_tag(header, &root_tag, 0, first_frame)
 }
 
 clay_is_scrolling :: proc(claystate: Clay_State) -> bool {
@@ -615,54 +626,35 @@ clay_files :: proc(appstate: ^nbtfinder.AppState) {
 
         idx := pool_get(claystate.treepool[:], id)
         active := idx >= 0
+				changed := false
 
         if clay.UI(clay.ID_LOCAL("FileHeader", u32(file_index)))({
-          layout = {
-            padding = { 4, 4, 2, 2 },
-            childGap = 4,
-            layoutDirection = .LeftToRight
-          },
-          cornerRadius = clay.CornerRadiusAll(2),
-          backgroundColor = clay.Hovered() ? COLOR_LIGHT_GREY : {},
-          transition = {
-            handler = DelayedEaseOut,
-            duration = 0.2,
-            // A "flag" enum is used to specify which properties to transition, use a bitwise OR (|) to construct the flags.
-            properties = { .X, .OverlayColor } | clay.TransitionPropertyBoundingBox,
-            interactionHandling = .AllowInteractionsWhileTransitioningPosition,
-            enter = { 
-              setInitialState = EnterExitSlide,
-              trigger = .TriggerOnFirstParentFrame
-              },
-              exit = { 
-                setFinalState = EnterExitSlide,
-                //trigger = .TriggerWhenParentExits
-              },
-            }
-          }) {
-            if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
-              if active {
-                // toggle
-                claystate.treepool[idx].id = 0
-                claystate.treepool[idx].last_updated = 0
-              } else {
-                idx = pool_add(claystate.treepool[:], id, claystate.current_frame)
 
-                file := appstate.file_store.staged_files[file_index]
+				}) {
+					if clay.Hovered() && clay.GetPointerState().state == .PressedThisFrame {
+						changed = true
+						if active {
+							// toggle
+							claystate.treepool[idx].id = 0
+							claystate.treepool[idx].last_updated = 0
+						} else {
+							idx = pool_add(claystate.treepool[:], id, claystate.current_frame)
 
-                handler, err := nbtfinder.get_or_open_file(appstate, file_index)
-                assert(err == nil)
+							file := appstate.file_store.staged_files[file_index]
 
-                active = true
-              }
-            }
+							handler, err := nbtfinder.get_or_open_file(appstate, file_index)
+							assert(err == nil)
 
-            filename := appstate.file_store.staged_files[file_index].filename
-            assert(len(filename) > 1)
+							active = true
+						}
+					}
 
-            clay.Text(filename, default_text)
-          }
+					filename := appstate.file_store.staged_files[file_index].filename
+					assert(len(filename) > 1)
 
+					file_header_entry_id := clay.ID_LOCAL("FileHeaderEntry")
+					clay_draw_entry(filename, nil, file_header_entry_id, false, clicked_proc_nothing)
+				}
 
 
           if (active) {
@@ -676,7 +668,7 @@ clay_files :: proc(appstate: ^nbtfinder.AppState) {
 
               switch v in handler.data {
                 case ^nbtfinder.NBT_Decoded_Header:
-                  clay_draw_nbt_header(v^)
+                  clay_draw_nbt_header(v^, changed)
                 case nbtfinder.MCA_File_Header:
                 case:
               }
