@@ -31,6 +31,10 @@ build :: proc(exit: ^runtime.Source_Code_Location) -> (err: os.Error) {
     flags.parse_or_exit(&options, os.args)
   }
 
+	directory := os.get_executable_directory(context.allocator) or_return
+	defer delete(directory)
+	os.set_working_directory(directory) or_return
+
   out_folder := fmt.tprintf("build/%v/", ODIN_OS)
   if !os.exists(out_folder) {
     os.make_directory_all(out_folder) or_return
@@ -40,7 +44,7 @@ build :: proc(exit: ^runtime.Source_Code_Location) -> (err: os.Error) {
 
   append(&command, "odin")
   append(&command, "build")
-  append(&command, "source/platform_sdl3")
+  append(&command, "source/nbtfinder")
 
 	if options.msvc {
 		append(&command, "-linker:msvc")
