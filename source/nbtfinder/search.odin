@@ -8,9 +8,12 @@ import "core:compress/gzip"
 import "core:compress/zlib"
 import "core:flags"
 import "core:fmt"
+import "core:mem"
 import "core:os"
-import "core:slice"
 import "core:simd"
+import "core:slice"
+import "core:sync"
+import "core:thread"
 import "core:time"
 import win "core:sys/windows"
 
@@ -56,12 +59,83 @@ main :: proc () {
 
 	//runtime.debug_trap()
 
-	result, performance, err := search_filename(options.filename, options.pattern, search_procedure)
-	if err != nil {
-		fmt.println(err)
-	} else {
-		search_result_print(options.filename, result)
+	THREAD_COUNT :: 12
+
+	pool : thread.Pool
+	thread.pool_init(&pool, context.allocator, THREAD_COUNT)
+	defer thread.pool_destroy(&pool)
+
+	thread.pool_start(&pool)
+
+	task_data_array := make([]Search_Task, 3)
+
+	task_data_array[0] = {
+		filename = "r.0.0.mca",
+		pattern = "minecraft",
+		search_procedure = count_all
 	}
+
+	task_data_array[1] = {
+		filename = "level.dat",
+		pattern = "minecraft",
+		search_procedure = count_all
+	}
+
+	task_data_array[2] = {
+		filename = "2-level.dat",
+		pattern = "minecraft",
+		search_procedure = count_all
+	}
+
+	for &task in task_data_array {
+		task_allocator : mem.Allocator
+		task_allocator = mem.panic_allocator()
+
+
+		thread.pool_add_task(&pool, task_allocator, search_add_task, &task)
+	}
+
+	for !thread.pool_is_empty(&pool) {
+		task, got := thread.pool_pop_done(&pool)
+		if got {
+			data := (^Search_Task)(task.data)
+
+			if data.err != nil {
+				fmt.println(data.err)
+			} else {
+				search_result_print(data.filename, data.result)
+			}
+
+			continue
+		}
+
+		time.sleep(100 * time.Millisecond)
+	}
+	thread.pool_finish(&pool)
+
+	fmt.println("Finished")
+}
+
+Search_Task :: struct {
+	filename: string,
+	pattern: string,
+	search_procedure: proc ([]byte, string) -> Search_Procedure_Result,
+	result: Search_Result,
+	performance: Performance_Data,
+	err: Error
+}
+
+search_add_task :: proc(task: thread.Task) {
+	search_task := (^Search_Task)(task.data)
+	filename := search_task.filename
+	pattern := search_task.pattern
+	search_procedure := search_task.search_procedure
+
+	result, performance, err := search_filename(filename, pattern, search_procedure)
+
+	search_task.result = result
+	search_task.performance = performance
+	search_task.err = err
 }
 
 tests :: proc() {
@@ -269,8 +343,8 @@ search_compressed_nbt :: proc (
 	search_procedure: proc ([]byte, string) -> Search_Procedure_Result
 	) -> (result: Search_Result, uncompressed_bytes_proccessed: int, err: gzip.Error)
 {
-	aligned_allocator_data := new(Aligned_Allocator_Data)
-	defer free(aligned_allocator_data)
+	aligned_allocator_data := new(Aligned_Allocator_Data, context.temp_allocator)
+	// defer free(aligned_allocator_data)
 	aligned_allocator_data.backing_allocator = context.temp_allocator
 	aligned_allocator_data.alignment = 64
 
@@ -280,9 +354,7 @@ search_compressed_nbt :: proc (
 	bytes.buffer_init_allocator(&uncompressed_buffer, 0, 64, aligned_allocator)
 	defer bytes.buffer_destroy(&uncompressed_buffer)
 
-	// NOTE(dendo): this gzip call asks for an allocator,
-	// but it doesn't allocates anything since the data comes from memory
-	gzip.load_from_bytes(file_bytes, &uncompressed_buffer, len(file_bytes), -1, context.allocator) or_return
+	gzip.load_from_bytes(file_bytes, &uncompressed_buffer, len(file_bytes), -1, context.temp_allocator) or_return
 
 	nbt_bytes := bytes.buffer_to_bytes(&uncompressed_buffer)
 	uncompressed_bytes_proccessed = len(nbt_bytes)
@@ -401,8 +473,8 @@ search_mca :: proc (
 	
   mca_header: ^MCA_File_Header = (^MCA_File_Header)(raw_data(file_bytes[0:8196]))
 
-	aligned_allocator_data := new(Aligned_Allocator_Data)
-	defer free(aligned_allocator_data)
+	aligned_allocator_data := new(Aligned_Allocator_Data, context.temp_allocator)
+	// defer free(aligned_allocator_data)
 	aligned_allocator_data.backing_allocator = context.temp_allocator
 	aligned_allocator_data.alignment = 64
 
@@ -431,6 +503,8 @@ search_mca :: proc (
 				case .Zlib:
 					chunk_data : []u8 = chunk[5:5+lenght_bytes-1]
 
+					// TODO: remove this
+					context.allocator = context.temp_allocator
 					zlib.inflate(input=chunk_data, buf=&uncompressed_buffer) or_return
 					buf = bytes.buffer_to_bytes(&uncompressed_buffer)
 				case .GZip:
