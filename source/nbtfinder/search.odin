@@ -12,6 +12,7 @@ import "core:mem"
 import "core:os"
 import "core:simd"
 import "core:slice"
+import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -65,32 +66,23 @@ main :: proc () {
 	thread.pool_init(&pool, context.allocator, THREAD_COUNT)
 	defer thread.pool_destroy(&pool)
 
+	performance: Performance_Data
+
+	tick := time.tick_now()
 	thread.pool_start(&pool)
 
-	task_data_array := make([]Search_Task, 3)
-
-	task_data_array[0] = {
-		filename = "r.0.0.mca",
-		pattern = "minecraft",
-		search_procedure = count_all
+	task_list, err := build_search_task_list(options.filename, options.pattern, search_procedure)
+	delete_task_list :: proc(task_list: []Search_Task) {
+		for &task in task_list {
+			delete(task.filename)
+		}
+		delete(task_list)
 	}
+	defer delete_task_list(task_list)
 
-	task_data_array[1] = {
-		filename = "level.dat",
-		pattern = "minecraft",
-		search_procedure = count_all
-	}
-
-	task_data_array[2] = {
-		filename = "2-level.dat",
-		pattern = "minecraft",
-		search_procedure = count_all
-	}
-
-	for &task in task_data_array {
+	for &task in task_list {
 		task_allocator : mem.Allocator
 		task_allocator = mem.panic_allocator()
-
 
 		thread.pool_add_task(&pool, task_allocator, search_add_task, &task)
 	}
@@ -100,10 +92,18 @@ main :: proc () {
 		if got {
 			data := (^Search_Task)(task.data)
 
-			if data.err != nil {
-				fmt.println(data.err)
-			} else {
-				search_result_print(data.filename, data.result)
+			switch data.err {
+				case nil:
+					performance.uncompressed_bytes_proccessed += data.performance.uncompressed_bytes_proccessed
+					performance.compressed_bytes_proccessed += data.performance.compressed_bytes_proccessed
+					search_result_print(data.filename, data.result)
+
+				case NBTFinder_Error.Not_Found:
+					performance.uncompressed_bytes_proccessed += data.performance.uncompressed_bytes_proccessed
+					performance.compressed_bytes_proccessed += data.performance.compressed_bytes_proccessed
+
+				case:
+					fmt.eprintfln("ERROR: file %v: %v", data.filename, data.err)
 			}
 
 			continue
@@ -112,6 +112,9 @@ main :: proc () {
 		time.sleep(100 * time.Millisecond)
 	}
 	thread.pool_finish(&pool)
+	performance.duration = time.tick_since(tick)
+
+	performance_data_print(performance)
 
 	fmt.println("Finished")
 }
@@ -136,6 +139,65 @@ search_add_task :: proc(task: thread.Task) {
 	search_task.result = result
 	search_task.performance = performance
 	search_task.err = err
+}
+
+build_search_task_list :: proc(filename: string, pattern: string, search_procedure: type_of(find_first)) -> (list: []Search_Task, err: Error) {
+	file_info := os.stat(filename, context.allocator) or_return
+	defer os.file_info_delete(file_info, context.allocator)
+
+	task_list := make([dynamic]Search_Task)
+
+	task_regular_file :: proc(file_info: os.File_Info, pattern: string, search_procedure: type_of(find_first), task_list: ^[dynamic]Search_Task) -> Error {
+		if file_info.size == 0 {
+			//fmt.eprintfln("INFO: Skiping empty file: %v", file_info.fullpath)
+			return nil
+		}
+		string_clone := strings.clone(file_info.fullpath) or_return
+		search_task := Search_Task{
+			filename = string_clone,
+			pattern = pattern,
+			search_procedure = search_procedure
+		}
+
+		append(task_list, search_task)
+		return nil
+	}
+
+	switch file_info.type {
+		case  .Undetermined, .Symlink, .Named_Pipe, .Socket, .Block_Device, .Character_Device:
+			return nil, NBTFinder_Error.File_Unsuported
+
+		case .Regular:
+			task_regular_file(file_info, pattern, search_procedure, &task_list) or_return
+		case .Directory:
+
+		directories_to_search := make([dynamic]string)
+		append(&directories_to_search, filename)
+
+		for len(directories_to_search) > 0 {
+			filename := pop(&directories_to_search)
+
+			file_info_list, err_ := os.read_directory_by_path(filename, 0, context.allocator)
+			defer os.file_info_slice_delete(file_info_list, context.allocator)
+			if err_ != nil {
+				err = err_
+				fmt.eprintfln("WARN: unable to read %v, skiped...", filename)
+			}
+
+			for file_info in file_info_list {
+				if file_info.type == .Regular {
+					task_regular_file(file_info, pattern, search_procedure, &task_list) or_return
+				} else if file_info.type == .Directory {
+					append(&directories_to_search, file_info.fullpath)
+				} else {
+					fmt.eprintfln("WARN: Skiping unexpedted file type (%v): %v, ", file_info.fullpath, file_info.type)
+				}
+			}
+		}
+
+	}
+
+	return task_list[:], nil
 }
 
 tests :: proc() {
@@ -247,7 +309,7 @@ Search_Result :: union {
 search_result_print :: proc(filename: string, result: Search_Result) {
 	switch type in result {
 		case Find_Result_Compressed_NBT:
-			fmt.printfln("Found at %v, byte_index: $v", filename, type.byte_index)
+			fmt.printfln("Found at %v, byte_index: %v", filename, type.byte_index)
 		case Find_Result_MCA:
 			file_chunk_x := type.chunk_index % 32
 			file_chunk_z := type.chunk_index / 32
@@ -261,7 +323,9 @@ search_result_print :: proc(filename: string, result: Search_Result) {
 				world_coordinate_x, world_coordinate_z
 				)
 		case Count_Result:
-			fmt.printfln("Found at %v, count: %v", filename, type.amount)
+			if type.amount > 0 {
+				fmt.printfln("Found at %v, count: %v", filename, type.amount)
+			}
 	}
 }
 
@@ -277,6 +341,7 @@ NBTFinder_Error :: enum {
 Error :: union {
 	os.Error,
 	gzip.Error,
+	runtime.Allocator_Error,
 	MCA_Search_Error,
 	NBTFinder_Error,
 }
@@ -467,8 +532,12 @@ search_mca :: proc (
 	search_procedure: proc ([]byte, string) -> Search_Procedure_Result
 	) -> (result: Search_Result, uncompressed_bytes_proccessed: int, err: MCA_Search_Error)
 {
-	if len(file_bytes) <= size_of(MCA_File_Header) {
+	if len(file_bytes) < size_of(MCA_File_Header) {
 		return nil, 0, NBTFinder_Error.File_Invalid
+	}
+
+	if len(file_bytes) == size_of(MCA_File_Header) {
+		return nil, 8192, nil
 	}
 	
   mca_header: ^MCA_File_Header = (^MCA_File_Header)(raw_data(file_bytes[0:8196]))
@@ -544,10 +613,11 @@ search_mca :: proc (
 		}
 	}
 
-	if result == nil {
-		err = NBTFinder_Error.Not_Found
+	// if result == nil {
+	// 	err = NBTFinder_Error.Not_Found
+	// }
 
-	}
+
 
 
 	return

@@ -10,7 +10,10 @@ Build_Options :: struct {
   speed: bool,
   print: bool,
   uprof: bool,
-	msvc: bool
+	msvc: bool,
+	sanitize_address: bool,
+	sanitize_memory: bool,
+	sanitize_thread: bool,
 }
 
 main :: proc() {
@@ -56,6 +59,18 @@ build :: proc(exit: ^runtime.Source_Code_Location) -> (err: os.Error) {
 
   if options.speed {
     append(&command, "-o:speed")
+  }
+
+  if options.sanitize_address {
+    append(&command, "-sanitize:address")
+  }
+
+  if options.sanitize_memory {
+    append(&command, "-sanitize:memory")
+  }
+
+  if options.sanitize_thread {
+    append(&command, "-sanitize:thread")
   }
 
   append(&command, "-collection:clay=external/clay/bindings/odin")
