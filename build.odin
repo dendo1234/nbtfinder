@@ -9,7 +9,8 @@ Build_Options :: struct {
   ndebug: bool,
   speed: bool,
   print: bool,
-  uprof: bool
+  uprof: bool,
+	msvc: bool
 }
 
 main :: proc() {
@@ -41,6 +42,10 @@ build :: proc(exit: ^runtime.Source_Code_Location) -> (err: os.Error) {
   append(&command, "build")
   append(&command, "source/platform_sdl3")
 
+	if options.msvc {
+		append(&command, "-linker:msvc")
+	}
+	
   if !options.ndebug {
     append(&command, "-debug")
   }

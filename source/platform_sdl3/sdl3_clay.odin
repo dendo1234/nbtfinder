@@ -163,7 +163,7 @@ clay_init :: proc() -> (ok: bool) {
 	// ttf.SetFontWrapAlignment(font, )
 
 	width, height: i32
-	ttf.GetStringSize(font, cstring(text.chars), uint(text.length), &width, &height);
+	ttf.GetStringSize(font, text.chars, uint(text.length), &width, &height);
 
 	return {
 		width = f32(width),
@@ -567,7 +567,7 @@ clay_render_draw_commands :: proc(renderer: ^sdl3.Renderer, render_commands: ^cl
 			color = alpha_blend(color, overlay)
 		}
 
-		text := ttf.CreateText(platstate.text_engine, font, cstring(config.stringContents.chars), uint(config.stringContents.length))
+		text := ttf.CreateText(platstate.text_engine, font, config.stringContents.chars, uint(config.stringContents.length))
 		assert(text != nil)
 
 		ttf.SetTextColorFloat(text, color[0], color[1], color[2], color[3])
