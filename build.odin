@@ -11,6 +11,7 @@ Build_Options :: struct {
   print: bool,
   uprof: bool,
 	msvc: bool,
+	old: bool,
 	sanitize_address: bool,
 	sanitize_memory: bool,
 	sanitize_thread: bool,
@@ -47,7 +48,11 @@ build :: proc(exit: ^runtime.Source_Code_Location) -> (err: os.Error) {
 
   append(&command, "odin")
   append(&command, "build")
-  append(&command, "source/nbtfinder")
+	if options.old {
+		append(&command, "source/old_nbtfinder/platform_sdl3")
+	} else {
+		append(&command, "source/nbtfinder")
+	}
 
 	if options.msvc {
 		append(&command, "-linker:msvc")

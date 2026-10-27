@@ -1,6 +1,6 @@
 package nbtfinder
 
-import uprof "../amduprof"
+import uprof "../../amduprof"
 import "base:intrinsics"
 import "base:runtime"
 import b "core:bytes"
